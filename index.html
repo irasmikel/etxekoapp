@@ -1,0 +1,1134 @@
+import { useState, useEffect, useMemo } from "react";
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, query, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDocs } from 'firebase/firestore';
+
+// Helper function to determine if a task is due today
+const isTaskDueToday = (task) => {
+  if (task.estado !== "pendiente") return false;
+
+  const lastDoneDate = new Date(task.ultimaRealizada);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Normalize today's date to the beginning of the day
+
+  let nextDueDate = new Date(lastDoneDate);
+
+  // Calculate the next due date based on custom frequency
+  const { frecuenciaTipo, frecuenciaValor, frecuenciaUnidad } = task;
+
+  if (frecuenciaTipo === "Personalizado" && frecuenciaValor && frecuenciaUnidad) {
+    switch (frecuenciaUnidad) {
+      case "dias":
+        nextDueDate.setDate(lastDoneDate.getDate() + frecuenciaValor);
+        break;
+      case "semanas":
+        nextDueDate.setDate(lastDoneDate.getDate() + (frecuenciaValor * 7));
+        break;
+      case "meses":
+        nextDueDate.setMonth(lastDoneDate.getMonth() + frecuenciaValor);
+        // Adjust the day if it goes past the end of the month
+        if (nextDueDate.getDate() < lastDoneDate.getDate()) {
+          nextDueDate.setDate(0);
+        }
+        break;
+      case "años":
+        nextDueDate.setFullYear(lastDoneDate.getFullYear() + frecuenciaValor);
+        break;
+      default:
+        return false;
+    }
+  } else {
+    // Logic for predefined frequencies (Diario, 1 vez a la semana, Mensual, Trimestral, Anual)
+    switch (frecuenciaTipo) {
+      case "Diario":
+        nextDueDate.setDate(lastDoneDate.getDate() + 1);
+        break;
+      case "Cada 3 días": // Maintain for compatibility with initial data if not migrated
+        nextDueDate.setDate(lastDoneDate.getDate() + 3);
+        break;
+      case "1 vez a la semana":
+        nextDueDate.setDate(lastDoneDate.getDate() + 7);
+        break;
+      case "Mensual":
+        nextDueDate.setMonth(lastDoneDate.getMonth() + 1);
+        if (nextDueDate.getDate() < lastDoneDate.getDate()) {
+          nextDueDate.setDate(0);
+        }
+        break;
+      case "Trimestral":
+        nextDueDate.setMonth(lastDoneDate.getMonth() + 3);
+        break;
+      case "Anual":
+        nextDueDate.setFullYear(lastDoneDate.getFullYear() + 1);
+        break;
+      default:
+        return false;
+    }
+  }
+
+  nextDueDate.setHours(0, 0, 0, 0); // Normalize due date
+  return nextDueDate <= today;
+};
+
+// Component for the confirmation modal
+const Modal = ({ message, onConfirm, onCancel, show }) => {
+  return show ? (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full text-center">
+        <p className="text-lg font-semibold text-neutral-800 mb-6">{message}</p>
+        <div className="flex justify-center gap-4">
+          <button
+            onClick={onConfirm}
+            className="bg-red-500 text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-red-600 transition"
+          >
+            Confirmar
+          </button>
+          <button
+            onClick={onCancel}
+            className="bg-neutral-300 text-neutral-800 px-5 py-2 rounded-full text-sm font-semibold hover:bg-neutral-400 transition"
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+};
+
+// Component for the alert modal
+const AlertDialog = ({ message, show, onClose }) => {
+  return show ? (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl p-6 max-w-sm w-full text-center">
+        <p className="text-lg font-semibold text-neutral-800 mb-6">{message}</p>
+        <button
+          onClick={onClose}
+          className="bg-blue-500 text-white px-5 py-2 rounded-full text-sm font-semibold hover:bg-blue-600 transition"
+        >
+          Aceptar
+        </button>
+      </div>
+    </div>
+  ) : null;
+};
+
+// Component for the task add/edit form screen
+const PantallaFormularioTarea = ({ tareaInicial, onSave, onCancel, onDelete, setAlertMessage, setShowAlertModal }) => {
+  const [nombre, setNombre] = useState(tareaInicial?.nombre || "");
+  const [frecuenciaTipo, setFrecuenciaTipo] = useState(tareaInicial?.frecuenciaTipo || "Diario");
+  const [frecuenciaValor, setFrecuenciaValor] = useState(tareaInicial?.frecuenciaValor || 1);
+  const [frecuenciaUnidad, setFrecuenciaUnidad] = useState(tareaInicial?.frecuenciaUnidad || "dias");
+  const [categoria, setCategoria] = useState(tareaInicial?.categoria || "");
+  const [icono, setIcono] = useState(tareaInicial?.icono || "");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!nombre || !frecuenciaTipo || !categoria || !icono) {
+      setAlertMessage("Todos los campos son obligatorios.");
+      setShowAlertModal(true);
+      return;
+    }
+    if (frecuenciaTipo === "Personalizado" && (!frecuenciaValor || frecuenciaValor < 1)) {
+      setAlertMessage("Para frecuencia personalizada, el valor debe ser un número positivo.");
+      setShowAlertModal(true);
+      return;
+    }
+
+    onSave({
+      id: tareaInicial?.id,
+      nombre,
+      frecuenciaTipo,
+      frecuenciaValor: frecuenciaTipo === "Personalizado" ? parseInt(frecuenciaValor) : null,
+      frecuenciaUnidad: frecuenciaTipo === "Personalizado" ? frecuenciaUnidad : null,
+      categoria,
+      ultimaRealizada: tareaInicial?.ultimaRealizada || new Date().toISOString().split("T")[0],
+      estado: tareaInicial?.estado || "pendiente",
+      icono,
+    });
+  };
+
+  return (
+    <div className="p-6 md:p-8 lg:p-10 max-w-xl mx-auto">
+      <h1 className="text-3xl md:text-4xl font-extrabold text-neutral-800 mb-6 text-center">
+        <span className="bg-clip-text text-transparent bg-gradient-to-r from-green-600 to-teal-600">
+          {tareaInicial ? "Editar Tarea" : "Añadir Nueva Tarea"}
+        </span>
+      </h1>
+      <form onSubmit={handleSubmit} className="bg-white p-6 rounded-3xl shadow-lg border border-neutral-100 space-y-5">
+        <div>
+          <label htmlFor="nombre" className="block text-neutral-700 text-sm font-bold mb-2">
+            Nombre de la Tarea:
+          </label>
+          <input
+            type="text"
+            id="nombre"
+            value={nombre}
+            onChange={(e) => setNombre(e.target.value)}
+            className="shadow appearance-none border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder="Ej: Limpiar cocina"
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="frecuenciaTipo" className="block text-neutral-700 text-sm font-bold mb-2">
+            Frecuencia:
+          </label>
+          <select
+            id="frecuenciaTipo"
+            value={frecuenciaTipo}
+            onChange={(e) => {
+              setFrecuenciaTipo(e.target.value);
+              if (e.target.value !== "Personalizado") {
+                setFrecuenciaValor(1);
+                setFrecuenciaUnidad("dias");
+              }
+            }}
+            className="shadow border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            required
+          >
+            <option value="Diario">Diario</option>
+            <option value="1 vez a la semana">1 vez a la semana</option>
+            <option value="Mensual">Mensual</option>
+            <option value="Trimestral">Trimestral</option>
+            <option value="Anual">Anual</option>
+            <option value="Personalizado">Personalizado (Cada X...)</option>
+          </select>
+        </div>
+        {frecuenciaTipo === "Personalizado" && (
+          <div className="flex gap-4">
+            <div className="flex-1">
+              <label htmlFor="frecuenciaValor" className="block text-neutral-700 text-sm font-bold mb-2">
+                Valor:
+              </label>
+              <input
+                type="number"
+                id="frecuenciaValor"
+                value={frecuenciaValor}
+                onChange={(e) => setFrecuenciaValor(e.target.value)}
+                className="shadow appearance-none border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                min="1"
+                required
+              />
+            </div>
+            <div className="flex-1">
+              <label htmlFor="frecuenciaUnidad" className="block text-neutral-700 text-sm font-bold mb-2">
+                Unidad:
+              </label>
+              <select
+                id="frecuenciaUnidad"
+                value={frecuenciaUnidad}
+                onChange={(e) => setFrecuenciaUnidad(e.target.value)}
+                className="shadow border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                required
+              >
+                <option value="dias">días</option>
+                <option value="semanas">semanas</option>
+                <option value="meses">meses</option>
+                <option value="años">años</option>
+              </select>
+            </div>
+          </div>
+        )}
+        <div>
+          <label htmlFor="categoria" className="block text-neutral-700 text-sm font-bold mb-2">
+            Categoría:
+          </label>
+          <input
+            type="text"
+            id="categoria"
+            value={categoria}
+            onChange={(e) => setCategoria(e.target.value)}
+            className="shadow appearance-none border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder="Ej: Cocina, Baño, General"
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="icono" className="block text-neutral-700 text-sm font-bold mb-2">
+            Icono (Emoji):
+          </label>
+          <input
+            type="text"
+            id="icono"
+            value={icono}
+            onChange={(e) => setIcono(e.target.value)}
+            className="shadow appearance-none border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder="Ej: 🧹, 🍽️, 🚿"
+            required
+          />
+        </div>
+        <div className="flex justify-between gap-4 pt-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 bg-neutral-300 text-neutral-800 px-6 py-3 rounded-full text-base font-semibold shadow-md hover:bg-neutral-400 transition-all duration-200"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            className="flex-1 bg-blue-600 text-white px-6 py-3 rounded-full text-base font-semibold shadow-md hover:bg-blue-700 transition-all duration-200"
+          >
+            Guardar Tarea
+          </button>
+        </div>
+        {tareaInicial && (
+          <button
+            type="button"
+            onClick={() => onDelete(tareaInicial.id)}
+            className="w-full mt-4 bg-red-500 text-white px-6 py-3 rounded-full text-base font-semibold shadow-md hover:bg-red-600 transition-all duration-200"
+          >
+            Eliminar Tarea
+          </button>
+        )}
+      </form>
+    </div>
+  );
+};
+
+// Component for the Note add/edit form screen
+const PantallaFormularioNota = ({ notaInicial, onSave, onCancel, onDelete, setAlertMessage, setShowAlertModal }) => {
+  const [titulo, setTitulo] = useState(notaInicial?.titulo || "");
+  const [contenido, setContenido] = useState(notaInicial?.contenido || "");
+  const [categoria, setCategoria] = useState(notaInicial?.categoria || "");
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!titulo || !contenido || !categoria) {
+      setAlertMessage("Todos los campos son obligatorios.");
+      setShowAlertModal(true);
+      return;
+    }
+
+    onSave({
+      id: notaInicial?.id,
+      titulo,
+      contenido,
+      categoria,
+    });
+  };
+
+  return (
+    <div className="p-6 md:p-8 lg:p-10 max-w-xl mx-auto">
+      <h1 className="text-3xl md:text-4xl font-extrabold text-neutral-800 mb-6 text-center">
+        <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-pink-600">
+          {notaInicial ? "Editar Nota/Receta" : "Añadir Nueva Nota/Receta"}
+        </span>
+      </h1>
+      <form onSubmit={handleSubmit} className="bg-white p-6 rounded-3xl shadow-lg border border-neutral-100 space-y-5">
+        <div>
+          <label htmlFor="titulo" className="block text-neutral-700 text-sm font-bold mb-2">
+            Título:
+          </label>
+          <input
+            type="text"
+            id="titulo"
+            value={titulo}
+            onChange={(e) => setTitulo(e.target.value)}
+            className="shadow appearance-none border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            placeholder="Ej: Receta de Tarta de Manzana"
+            required
+          />
+        </div>
+        <div>
+          <label htmlFor="contenido" className="block text-neutral-700 text-sm font-bold mb-2">
+            Contenido:
+          </label>
+          <textarea
+            id="contenido"
+            value={contenido}
+            onChange={(e) => setContenido(e.target.value)}
+            className="shadow appearance-none border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent h-32 resize-none"
+            placeholder="Ej: Ingredientes, pasos, etc."
+            required
+          ></textarea>
+        </div>
+        <div>
+          <label htmlFor="categoriaNota" className="block text-neutral-700 text-sm font-bold mb-2">
+            Categoría:
+          </label>
+          <input
+            type="text"
+            id="categoriaNota"
+            value={categoria}
+            onChange={(e) => setCategoria(e.target.value)}
+            className="shadow appearance-none border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            placeholder="Ej: Cocina, Ideas, Personal"
+            required
+          />
+        </div>
+        <div className="flex justify-between gap-4 pt-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="flex-1 bg-neutral-300 text-neutral-800 px-6 py-3 rounded-full text-base font-semibold shadow-md hover:bg-neutral-400 transition-all duration-200"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            className="flex-1 bg-indigo-600 text-white px-6 py-3 rounded-full text-base font-semibold shadow-md hover:bg-indigo-700 transition-all duration-200"
+          >
+            Guardar Nota
+          </button>
+        </div>
+        {notaInicial && (
+          <button
+            type="button"
+            onClick={() => onDelete(notaInicial.id)}
+            className="w-full mt-4 bg-red-500 text-white px-6 py-3 rounded-full text-base font-semibold shadow-md hover:bg-red-600 transition-all duration-200"
+          >
+            Eliminar Nota
+          </button>
+        )}
+      </form>
+    </div>
+  );
+};
+
+
+// Component for the Home screen (Tasks)
+const PantallaInicio = ({ tareas, isLoading, isTaskDueToday, marcarComoHecha, omitirTarea, setTareaEditando, setPantalla }) => {
+  const [filtroTareas, setFiltroTareas] = useState("hoy");
+  const [filtroCategoriaTareas, setFiltroCategoriaTareas] = useState("Todas");
+
+  // Obtener categorías únicas de tareas
+  const categoriasTareas = useMemo(() => {
+    const uniqueCategories = new Set(tareas.map(tarea => tarea.categoria));
+    return ["Todas", ...Array.from(uniqueCategories).sort()];
+  }, [tareas]);
+
+  // Filtra y ordena las tareas
+  const tareasFiltradas = useMemo(() => {
+    let filtered = tareas;
+
+    // Filtrar por categoría
+    if (filtroCategoriaTareas !== "Todas") {
+      filtered = filtered.filter(tarea => tarea.categoria === filtroCategoriaTareas);
+    }
+
+    // Filtrar por "hoy" o "todas"
+    if (filtroTareas === "hoy") {
+      filtered = filtered.filter(isTaskDueToday);
+    }
+
+    // Ordenar tareas
+    return [...filtered].sort((a, b) => {
+      const aDue = isTaskDueToday(a);
+      const bDue = isTaskDueToday(b);
+
+      if (aDue && !bDue) return -1;
+      if (!aDue && bDue) return 1;
+
+      const statusOrder = { "pendiente": 1, "hecha": 2, "omitida": 3 };
+      if (statusOrder[a.estado] < statusOrder[b.estado]) return -1;
+      if (statusOrder[a.estado] > statusOrder[b.estado]) return 1;
+
+      return a.nombre.localeCompare(b.nombre);
+    });
+  }, [tareas, filtroTareas, filtroCategoriaTareas, isTaskDueToday]);
+
+  return (
+    <div className="p-6 md:p-8 lg:p-10 max-w-4xl mx-auto relative">
+      <h1 className="text-3xl md:text-4xl font-extrabold text-neutral-800 mb-6 text-center">
+        <span className="bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-purple-600">
+          Gestión de Tareas
+        </span>
+      </h1>
+
+      {isLoading ? (
+        <div className="text-center py-10">
+          <p className="text-neutral-600 text-lg">Cargando tareas...</p>
+          <div className="mt-4 animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+        </div>
+      ) : (
+        <>
+          {/* Botones de filtro para "Tareas de Hoy" y "Todas las Tareas" */}
+          <div className="flex justify-center mb-4 space-x-4">
+            <button
+              onClick={() => setFiltroTareas("hoy")}
+              className={`px-6 py-2 rounded-full font-semibold transition-all duration-200 ${
+                filtroTareas === "hoy" ? "bg-blue-600 text-white shadow-md" : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300"
+              }`}
+            >
+              Tareas de Hoy
+            </button>
+            <button
+              onClick={() => setFiltroTareas("todas")}
+              className={`px-6 py-2 rounded-full font-semibold transition-all duration-200 ${
+                filtroTareas === "todas" ? "bg-blue-600 text-white shadow-md" : "bg-neutral-200 text-neutral-700 hover:bg-neutral-300"
+              }`}
+            >
+              Todas las Tareas
+            </button>
+          </div>
+
+          {/* Filtro por categoría */}
+          <div className="mb-6 text-center">
+            <label htmlFor="filtroCategoriaTareas" className="block text-neutral-700 text-sm font-bold mb-2">
+              Filtrar por Categoría:
+            </label>
+            <select
+              id="filtroCategoriaTareas"
+              value={filtroCategoriaTareas}
+              onChange={(e) => setFiltroCategoriaTareas(e.target.value)}
+              className="shadow border rounded-xl py-2 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent inline-block w-auto min-w-[150px]"
+            >
+              {categoriasTareas.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Renderiza las tareas filtradas */}
+          {tareasFiltradas.length > 0 ? (
+            <div className="space-y-5">
+              {tareasFiltradas.map((tarea) => (
+                <div
+                  key={tarea.id}
+                  className="flex flex-col sm:flex-row justify-between items-center p-5 bg-white rounded-3xl shadow-lg border border-neutral-100 transform hover:scale-[1.01] transition-all duration-300 ease-in-out cursor-pointer"
+                >
+                  <div className="flex items-center flex-1 mb-3 sm:mb-0">
+                    <span className="text-3xl mr-4">{tarea.icono}</span>
+                    <div>
+                      <div className="text-xl font-bold text-neutral-900 leading-tight">
+                        {tarea.nombre}
+                        {/* Etiqueta "Hoy" si la tarea está vencida hoy y el filtro es "todas" */}
+                        {filtroTareas === "todas" && isTaskDueToday(tarea) && (
+                          <span className="ml-2 px-2 py-0.5 text-xs bg-red-100 text-red-700 rounded-full font-medium">¡Hoy!</span>
+                        )}
+                      </div>
+                      <div className="text-sm text-neutral-500 mt-1">
+                        {tarea.frecuenciaTipo === "Personalizado"
+                          ? `Cada ${tarea.frecuenciaValor} ${tarea.frecuenciaUnidad}`
+                          : tarea.frecuenciaTipo} - Última: {tarea.ultimaRealizada}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Muestra el estado o los botones de acción */}
+                  {tarea.estado === "hecha" ? (
+                    <span className="text-green-600 font-semibold text-lg flex items-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Completada
+                    </span>
+                  ) : tarea.estado === "omitida" ? (
+                    <span className="text-red-500 font-semibold text-lg flex items-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      Omitida
+                    </span>
+                  ) : (
+                    <div className="flex gap-3 mt-3 sm:mt-0">
+                      <button
+                        onClick={() => marcarComoHecha(tarea.id)}
+                        className="bg-green-500 text-white px-5 py-2 rounded-full text-sm font-semibold shadow-md hover:bg-green-600 transition-all duration-200 ease-in-out transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50"
+                      >
+                        Hecho
+                      </button>
+                      <button
+                        onClick={() => omitirTarea(tarea.id)}
+                        className="bg-neutral-300 text-neutral-800 px-5 py-2 rounded-full text-sm font-semibold shadow-md hover:bg-neutral-400 transition-all duration-200 ease-in-out transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-neutral-400 focus:ring-opacity-50"
+                      >
+                        Omitir
+                      </button>
+                      <button
+                        onClick={() => {
+                          setTareaEditando(tarea);
+                          setPantalla("formularioTarea");
+                        }}
+                        className="bg-blue-500 text-white px-3 py-2 rounded-full text-sm font-semibold shadow-md hover:bg-blue-600 transition-all duration-200 ease-in-out transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50"
+                        title="Editar Tarea"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                          <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.38-2.828-2.829z" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-neutral-500 text-center py-8 text-lg bg-white rounded-3xl shadow-lg border border-neutral-100">
+              {filtroTareas === "hoy" && filtroCategoriaTareas === "Todas"
+                ? "¡Felicidades! No tienes tareas pendientes para hoy."
+                : "No hay tareas registradas que coincidan con el filtro."}
+            </p>
+          )}
+        </>
+      )}
+
+      {/* Botón flotante para añadir nueva tarea */}
+      <button
+        onClick={() => {
+          setTareaEditando(null); // Asegurarse de que no estamos editando ninguna tarea
+          setPantalla("formularioTarea");
+        }}
+        className="fixed bottom-24 right-6 bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700 transition-all duration-300 ease-in-out transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 z-40"
+        title="Añadir Nueva Tarea"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+        </svg>
+      </button>
+    </div>
+  );
+};
+
+// Component for the Repository screen (Notes)
+const PantallaRepositorio = ({ notas, isLoading, busquedaNota, setBusquedaNota, filtroCategoriaNotas, setFiltroCategoriaNotas, setNotaEditando, setPantalla }) => {
+  // Obtener categorías únicas de notas
+  const categoriasNotas = useMemo(() => {
+    const uniqueCategories = new Set(notas.map(nota => nota.categoria));
+    return ["Todas", ...Array.from(uniqueCategories).sort()];
+  }, [notas]);
+
+  // Filtra las notas basándose en el término de búsqueda y categoría
+  const notasFiltradas = useMemo(() => {
+    let filtered = notas;
+
+    // Filtrar por categoría
+    if (filtroCategoriaNotas !== "Todas") {
+      filtered = filtered.filter(nota => nota.categoria === filtroCategoriaNotas);
+    }
+
+    // Filtrar por búsqueda
+    if (busquedaNota) {
+      const lowerCaseBusqueda = busquedaNota.toLowerCase();
+      filtered = filtered.filter(
+        (nota) =>
+          nota.titulo.toLowerCase().includes(lowerCaseBusqueda) ||
+          nota.contenido.toLowerCase().includes(lowerCaseBusqueda) ||
+          nota.categoria.toLowerCase().includes(lowerCaseBusqueda)
+      );
+    }
+    return filtered;
+  }, [notas, busquedaNota, filtroCategoriaNotas]);
+
+  return (
+    <div className="p-6 md:p-8 lg:p-10 max-w-4xl mx-auto relative">
+      <h1 className="text-3xl md:text-4xl font-extrabold text-neutral-800 mb-6 text-center">
+        <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-pink-600">
+          Mis Notas y Recetas
+        </span>
+      </h1>
+
+      {isLoading ? (
+        <div className="text-center py-10">
+          <p className="text-neutral-600 text-lg">Cargando notas...</p>
+          <div className="mt-4 animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto"></div>
+        </div>
+      ) : (
+        <>
+          {/* Barra de búsqueda para notas */}
+          <div className="mb-4">
+            <input
+              type="text"
+              placeholder="Buscar notas por título, contenido o categoría..."
+              className="shadow appearance-none border rounded-xl w-full py-3 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              value={busquedaNota}
+              onChange={(e) => setBusquedaNota(e.target.value)}
+            />
+          </div>
+
+          {/* Filtro por categoría */}
+          <div className="mb-6 text-center">
+            <label htmlFor="filtroCategoriaNotas" className="block text-neutral-700 text-sm font-bold mb-2">
+              Filtrar por Categoría:
+            </label>
+            <select
+              id="filtroCategoriaNotas"
+              value={filtroCategoriaNotas}
+              onChange={(e) => setFiltroCategoriaNotas(e.target.value)}
+              className="shadow border rounded-xl py-2 px-4 text-neutral-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent inline-block w-auto min-w-[150px]"
+            >
+              {categoriasNotas.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Renderiza las notas filtradas */}
+          {notasFiltradas.length > 0 ? (
+            <div className="space-y-5">
+              {notasFiltradas.map((nota) => (
+                <div
+                  key={nota.id}
+                  className="p-5 bg-white rounded-3xl shadow-lg border border-neutral-100 transform hover:scale-[1.01] transition-all duration-300 ease-in-out cursor-pointer"
+                  onClick={() => {
+                    setNotaEditando(nota);
+                    setPantalla("formularioNota");
+                  }}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xl font-bold text-neutral-900">
+                      {nota.titulo}
+                    </div>
+                  </div>
+                  <div className="text-sm text-blue-600 font-medium mb-2 bg-blue-50 px-3 py-1 rounded-full inline-block">
+                    {nota.categoria}
+                  </div>
+                  <p className="text-neutral-700 leading-relaxed text-base mt-2">
+                    {nota.contenido}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-neutral-500 text-center py-8 text-lg bg-white rounded-3xl shadow-lg border border-neutral-100">
+              No se encontraron notas que coincidan con tu búsqueda o filtro.
+            </p>
+          )}
+        </>
+      )}
+
+      {/* Floating button to add new note */}
+      <button
+        onClick={() => {
+          setNotaEditando(null); // Ensure we are not editing any note
+          setPantalla("formularioNota");
+        }}
+        className="fixed bottom-24 right-6 bg-indigo-600 text-white p-4 rounded-full shadow-lg hover:bg-indigo-700 transition-all duration-300 ease-in-out transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-50 z-40"
+        title="Añadir Nueva Nota/Receta"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+        </svg>
+      </button>
+    </div>
+  );
+};
+
+// Component for the History screen
+const PantallaHistorial = ({ tareas, isLoading }) => (
+  <div className="p-6 md:p-8 lg:p-10 max-w-4xl mx-auto">
+    <h1 className="text-3xl md:text-4xl font-extrabold text-neutral-800 mb-6 text-center">
+      <span className="bg-clip-text text-transparent bg-gradient-to-r from-teal-600 to-cyan-600">
+        Historial de Tareas
+      </span>
+    </h1>
+    {isLoading ? (
+        <div className="text-center py-10">
+          <p className="text-neutral-600 text-lg">Cargando historial...</p>
+          <div className="mt-4 animate-spin rounded-full h-12 w-12 border-b-2 border-teal-500 mx-auto"></div>
+        </div>
+      ) : (
+        <div className="bg-white p-6 rounded-3xl shadow-lg border border-neutral-100">
+          <ul className="space-y-3">
+            {/* Filter and map only the completed tasks for the history */}
+            {tareas
+              .filter((t) => t.estado === "hecha")
+              .map((t) => (
+                <li key={t.id} className="flex items-center text-neutral-700 text-lg border-b border-neutral-100 pb-3 last:border-b-0 last:pb-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-green-500 mr-2 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  <span className="font-medium">{t.nombre}</span>
+                  <span className="text-neutral-500 ml-auto text-sm">({t.ultimaRealizada})</span>
+                </li>
+              ))}
+          </ul>
+          {tareas.filter((t) => t.estado === "hecha").length === 0 && (
+            <p className="text-neutral-500 text-center py-4">Aún no hay tareas completadas. ¡Manos a la obra!</p>
+          )}
+        </div>
+      )}
+  </div>
+);
+
+// Component for the Settings screen
+const PantallaAjustes = ({ userId, handleResetData }) => (
+  <div className="p-6 md:p-8 lg:p-10 max-w-4xl mx-auto">
+    <h1 className="text-3xl md:text-4xl font-extrabold text-neutral-800 mb-6 text-center">
+      <span className="bg-clip-text text-transparent bg-gradient-to-r from-orange-600 to-red-600">
+        Ajustes de la Aplicación
+      </span>
+    </h1>
+    <div className="bg-white p-6 rounded-3xl shadow-lg border border-neutral-100 text-center">
+      <p className="text-lg text-neutral-700 mb-4">
+        Aquí podrás gestionar la configuración de tu aplicación.
+      </p>
+      <p className="text-sm text-neutral-500 mb-6">
+        (En futuras versiones, podríamos añadir opciones como personalización de temas y notificaciones.)
+      </p>
+      {userId && (
+        <p className="text-sm text-neutral-600 mb-4">
+          Tu ID de usuario anónimo: <span className="font-mono bg-neutral-100 p-1 rounded-md text-xs break-all">{userId}</span>
+        </p>
+      )}
+      <button
+        onClick={handleResetData} // Use the function that manages the modal
+        className="mt-6 bg-red-500 text-white px-6 py-3 rounded-full text-base font-semibold shadow-md hover:bg-red-600 transition-all duration-200 ease-in-out transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50"
+      >
+        Resetear Todos los Datos
+      </button>
+    </div>
+  </div>
+);
+
+
+export default function App() {
+  // Firebase configuration (obtained from Canvas environment variables)
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+  const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+  // Initialize Firebase
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const auth = getAuth(app);
+
+  // Application states
+  const [pantalla, setPantalla] = useState("inicio");
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmMessage, setConfirmMessage] = useState("");
+  const [onConfirmAction, setOnConfirmAction] = useState(() => () => {});
+  const [showAlertModal, setShowAlertModal] = useState(false);
+  const [alertMessage, setAlertMessage] = useState("");
+  const [onAlertCloseAction, setOnAlertCloseAction] = useState(() => () => {});
+  const [tareaEditando, setTareaEditando] = useState(null);
+  const [notaEditando, setNotaEditando] = useState(null); // New state for editing notes
+  const [tareas, setTareas] = useState([]);
+  const [notas, setNotas] = useState([]);
+  const [userId, setUserId] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // States for notes filtering and search
+  const [busquedaNota, setBusquedaNota] = useState("");
+  const [filtroCategoriaNotas, setFiltroCategoriaNotas] = useState("Todas");
+
+  // Anonymous authentication with Firebase
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        try {
+          const anonUser = await signInAnonymously(auth);
+          setUserId(anonUser.user.uid);
+        } catch (error) {
+          console.error("Error signing in anonymously:", error);
+          setAlertMessage("Error al iniciar sesión. No se podrán guardar los datos.");
+          setShowAlertModal(true);
+        }
+      }
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
+  }, [auth]);
+
+  // Load tasks and notes from Firestore
+  useEffect(() => {
+    if (!isAuthReady || !userId) return;
+
+    setIsLoading(true); // Start loading
+
+    // Subscribe to changes in the tasks collection
+    const tasksCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tasks`);
+    const unsubscribeTasks = onSnapshot(tasksCollectionRef, (snapshot) => {
+      const fetchedTasks = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setTareas(fetchedTasks);
+      setIsLoading(false); // End task loading
+    }, (error) => {
+      console.error("Error loading tasks:", error);
+      setAlertMessage("Error al cargar las tareas.");
+      setShowAlertModal(true);
+      setIsLoading(false); // End loading on error
+    });
+
+    // Subscribe to changes in the notes collection
+    const notesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/notes`);
+    const unsubscribeNotes = onSnapshot(notesCollectionRef, (snapshot) => {
+      const fetchedNotes = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setNotas(fetchedNotes);
+      setIsLoading(false); // End note loading
+    }, (error) => {
+      console.error("Error loading notes:", error);
+      setAlertMessage("Error al cargar las notas.");
+      setShowAlertModal(true);
+      setIsLoading(false); // End loading on error
+    });
+
+    // Clean up subscriptions on component unmount
+    return () => {
+      unsubscribeTasks();
+      unsubscribeNotes();
+    };
+  }, [isAuthReady, userId, db, appId]);
+
+  // Function to mark a task as done in Firestore
+  const marcarComoHecha = async (id) => {
+    if (!userId) return;
+    try {
+      const taskRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, id);
+      await updateDoc(taskRef, {
+        estado: "hecha",
+        ultimaRealizada: new Date().toISOString().split("T")[0]
+      });
+    } catch (error) {
+      console.error("Error marking as done:", error);
+      setAlertMessage("Error al marcar la tarea como hecha.");
+      setShowAlertModal(true);
+    }
+  };
+
+  // Function to skip a task in Firestore
+  const omitirTarea = async (id) => {
+    if (!userId) return;
+    try {
+      const taskRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, id);
+      await updateDoc(taskRef, { estado: "omitida" });
+    } catch (error) {
+      console.error("Error skipping task:", error);
+      setAlertMessage("Error al omitir la tarea.");
+      setShowAlertModal(true);
+    }
+  };
+
+  // Function to add or update a task in Firestore
+  const guardarTarea = async (nuevaTarea) => {
+    if (!userId) return;
+    try {
+      if (nuevaTarea.id) {
+        // It's an edit
+        const taskRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, nuevaTarea.id);
+        await updateDoc(taskRef, {
+          nombre: nuevaTarea.nombre,
+          frecuenciaTipo: nuevaTarea.frecuenciaTipo,
+          frecuenciaValor: nuevaTarea.frecuenciaValor,
+          frecuenciaUnidad: nuevaTarea.frecuenciaUnidad,
+          categoria: nuevaTarea.categoria,
+          icono: nuevaTarea.icono,
+        });
+      } else {
+        // It's a new task
+        await addDoc(collection(db, `artifacts/${appId}/users/${userId}/tasks`), {
+          nombre: nuevaTarea.nombre,
+          frecuenciaTipo: nuevaTarea.frecuenciaTipo,
+          frecuenciaValor: nuevaTarea.frecuenciaValor,
+          frecuenciaUnidad: nuevaTarea.frecuenciaUnidad,
+          categoria: nuevaTarea.categoria,
+          ultimaRealizada: new Date().toISOString().split("T")[0], // Current date on creation
+          estado: "pendiente",
+          icono: nuevaTarea.icono,
+        });
+      }
+      setTareaEditando(null);
+      setPantalla("inicio");
+    } catch (error) {
+      console.error("Error saving task:", error);
+      setAlertMessage("Error al guardar la tarea.");
+      setShowAlertModal(true);
+    }
+  };
+
+  // Function to delete a task in Firestore
+  const eliminarTarea = (id) => {
+    setConfirmMessage("¿Estás seguro de que quieres eliminar esta tarea? Esta acción es irreversible.");
+    setOnConfirmAction(async () => {
+      if (!userId) return;
+      try {
+        await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/tasks`, id));
+        setShowConfirmModal(false);
+        setAlertMessage("Tarea eliminada correctamente.");
+        setShowAlertModal(true);
+      } catch (error) {
+        console.error("Error deleting task:", error);
+        setAlertMessage("Error al eliminar la tarea.");
+        setShowAlertModal(true);
+      }
+    });
+    setShowConfirmModal(true);
+  };
+
+  // Function to add or update a note in Firestore
+  const guardarNota = async (nuevaNota) => {
+    if (!userId) return;
+    try {
+      if (nuevaNota.id) {
+        // It's an edit
+        const noteRef = doc(db, `artifacts/${appId}/users/${userId}/notes`, nuevaNota.id);
+        await updateDoc(noteRef, {
+          titulo: nuevaNota.titulo,
+          contenido: nuevaNota.contenido,
+          categoria: nuevaNota.categoria,
+        });
+      } else {
+        // It's a new note
+        await addDoc(collection(db, `artifacts/${appId}/users/${userId}/notes`), {
+          titulo: nuevaNota.titulo,
+          contenido: nuevaNota.contenido,
+          categoria: nuevaNota.categoria,
+          fechaCreacion: new Date().toISOString().split("T")[0],
+        });
+      }
+      setNotaEditando(null);
+      setPantalla("repositorio");
+    } catch (error) {
+      console.error("Error saving note:", error);
+      setAlertMessage("Error al guardar la nota.");
+      setShowAlertModal(true);
+    }
+  };
+
+  // Function to delete a note in Firestore
+  const eliminarNota = (id) => {
+    setConfirmMessage("¿Estás seguro de que quieres eliminar esta nota/receta? Esta acción es irreversible.");
+    setOnConfirmAction(async () => {
+      if (!userId) return;
+      try {
+        await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/notes`, id));
+        setShowConfirmModal(false);
+        setAlertMessage("Nota/receta eliminada correctamente.");
+        setShowAlertModal(true);
+      } catch (error) {
+        console.error("Error deleting note:", error);
+        setAlertMessage("Error al eliminar la nota/receta.");
+        setShowAlertModal(true);
+      }
+    });
+    setShowConfirmModal(true);
+  };
+
+  // Function to handle data reset with a confirmation modal
+  const handleResetData = () => {
+    setConfirmMessage("¿Estás seguro de que quieres resetear TODOS los datos (tareas y notas)? Esta acción es irreversible.");
+    setOnConfirmAction(async () => {
+      if (!userId) return;
+      try {
+        // Delete all tasks
+        const qTasks = query(collection(db, `artifacts/${appId}/users/${userId}/tasks`));
+        const taskSnapshot = await getDocs(qTasks);
+        for (const docSnapshot of taskSnapshot.docs) {
+          await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/tasks`, docSnapshot.id));
+        }
+
+        // Delete all notes
+        const qNotes = query(collection(db, `artifacts/${appId}/users/${userId}/notes`));
+        const noteSnapshot = await getDocs(qNotes);
+        for (const docSnapshot of noteSnapshot.docs) {
+          await deleteDoc(doc(db, `artifacts/${appId}/users/${userId}/notes`, docSnapshot.id));
+        }
+
+        setShowConfirmModal(false);
+        setAlertMessage("Todos los datos han sido reseteados. La aplicación se recargará.");
+        setOnAlertCloseAction(() => () => window.location.reload());
+        setShowAlertModal(true);
+      } catch (error) {
+        console.error("Error resetting data:", error);
+        setAlertMessage("Error al resetear los datos.");
+        setShowAlertModal(true);
+      }
+    });
+    setShowConfirmModal(true);
+  };
+
+  return (
+    // Main application container with background and flexbox for layout
+    <div className="min-h-screen bg-gradient-to-br from-neutral-50 to-neutral-100 flex flex-col font-inter">
+      {/* Contenido principal que ocupa el espacio restante y permite scroll */}
+      <div className="flex-1 overflow-y-auto pb-20"> {/* Añade padding-bottom para que el contenido no quede oculto por la nav bar */}
+        {/* Renderiza la pantalla activa según el estado 'pantalla' */}
+        {pantalla === "inicio" && <PantallaInicio
+          tareas={tareas}
+          isLoading={isLoading}
+          isTaskDueToday={isTaskDueToday}
+          marcarComoHecha={marcarComoHecha}
+          omitirTarea={omitirTarea}
+          setTareaEditando={setTareaEditando}
+          setPantalla={setPantalla}
+        />}
+        {pantalla === "repositorio" && <PantallaRepositorio
+          notas={notas}
+          isLoading={isLoading}
+          busquedaNota={busquedaNota}
+          setBusquedaNota={setBusquedaNota}
+          filtroCategoriaNotas={filtroCategoriaNotas}
+          setFiltroCategoriaNotas={setFiltroCategoriaNotas}
+          setNotaEditando={setNotaEditando}
+          setPantalla={setPantalla}
+        />}
+        {pantalla === "historial" && <PantallaHistorial
+          tareas={tareas}
+          isLoading={isLoading}
+        />}
+        {pantalla === "ajustes" && <PantallaAjustes
+          userId={userId}
+          handleResetData={handleResetData}
+        />}
+        {pantalla === "formularioTarea" && (
+          <PantallaFormularioTarea
+            tareaInicial={tareaEditando}
+            onSave={guardarTarea}
+            onCancel={() => {
+              setTareaEditando(null); // Limpiar la tarea en edición
+              setPantalla("inicio");
+            }}
+            onDelete={eliminarTarea}
+            setAlertMessage={setAlertMessage}
+            setShowAlertModal={setShowAlertModal}
+          />
+        )}
+        {pantalla === "formularioNota" && (
+          <PantallaFormularioNota
+            notaInicial={notaEditando}
+            onSave={guardarNota}
+            onCancel={() => {
+              setNotaEditando(null); // Limpiar la nota en edición
+              setPantalla("repositorio");
+            }}
+            onDelete={eliminarNota}
+            setAlertMessage={setAlertMessage}
+            setShowAlertModal={setShowAlertModal}
+          />
+        )}
+      </div>
+
+      {/* Barra de navegación inferior */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-neutral-200 px-4 py-3 flex justify-around shadow-2xl z-50">
+        {[
+          { icono: "🏠", label: "Inicio", pantalla: "inicio" },
+          { icono: "📚", label: "Notas", pantalla: "repositorio" },
+          { icono: "📊", label: "Historial", pantalla: "historial" },
+          { icono: "⚙️", label: "Ajustes", pantalla: "ajustes" },
+        ].map((item) => (
+          <button
+            key={item.pantalla}
+            onClick={() => setPantalla(item.pantalla)}
+            // Clases dinámicas para resaltar el botón activo
+            className={`flex flex-col items-center text-xs font-medium rounded-xl px-4 py-2 transition-all duration-300 ease-in-out transform hover:scale-105 ${
+              pantalla === item.pantalla
+                ? "bg-blue-100 text-blue-700 shadow-inner" // Estilo para el botón activo
+                : "text-neutral-500 hover:text-neutral-800 hover:bg-neutral-50" // Estilo para botones inactivos
+            }`}
+          >
+            <span className="text-2xl mb-1">{item.icono}</span> {/* Icono más grande */}
+            <span className="mt-0.5 hidden sm:block">{item.label}</span> {/* Oculta la etiqueta en pantallas muy pequeñas */}
+          </button>
+        ))}
+      </nav>
+
+      {/* Modales personalizados */}
+      <Modal
+        message={confirmMessage}
+        show={showConfirmModal}
+        onConfirm={() => { onConfirmAction(); setShowConfirmModal(false); }}
+        onCancel={() => setShowConfirmModal(false)}
+      />
+      <AlertDialog
+        message={alertMessage}
+        show={showAlertModal}
+        onClose={() => { onAlertCloseAction(); setShowAlertModal(false); }}
+      />
+    </div>
+  );
+}
