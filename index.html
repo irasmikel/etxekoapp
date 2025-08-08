@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Gestión de Tareas</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Firebase SDKs (compat versions for consistency with original code) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif; /* Using Inter font */
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      /* Removed color-scheme: light dark; to prevent automatic dark mode for body */
+    }
+    /* Custom styles for button active states (Tailwind doesn't have direct active-state classes for background) */
+    .btn-active {
+      background-color: #4f46e5; /* Blue-600 */
+      color: white;
+    }
+    .btn-inactive {
+      background-color: #e5e7eb; /* Gray-200 */
+      color: #374151; /* Gray-700 */
+    }
+    /* Dark mode specific styles for text/borders where needed, but keeping backgrounds light */
+    .dark .text-gray-900 {
+        color: #1f2937; /* Keep dark text on light background */
+    }
+    .dark .text-gray-700 {
+        color: #374151;
+    }
+    .dark .text-gray-600 {
+        color: #4b5563;
+    }
+    .dark .text-gray-50 {
+        background-color: #ffffff; /* Force white background */
+    }
+    .dark .bg-gray-50, .dark .bg-white {
+        background-color: #ffffff; /* Force white background even in dark mode */
+    }
+    .dark .bg-gray-200 { /* For inactive buttons */
+        background-color: #e5e7eb;
+    }
+    .dark .bg-gray-300 { /* For hover states */
+        background-color: #d1d5db;
+    }
+    .dark .bg-gray-600 { /* For dark mode specific buttons like edit/delete */
+        background-color: #e5e7eb; /* Make them light too */
+    }
+    .dark .bg-red-700 { /* For delete button in dark mode */
+        background-color: #fca5a5; /* Lighter red */
+    }
+    .dark .bg-red-100 { /* For delete button in dark mode */
+        background-color: #fee2e2; /* Lighter red */
+    }
+    .dark .bg-blue-400 { /* For tags */
+        color: #2563eb; /* Darker blue for light background */
+    }
+
+
+    /* Animations for modals */
+    .modal-enter {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+    .modal-enter-active {
+      opacity: 1;
+      transform: translateY(0);
+      transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+    }
+    .modal-exit {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .modal-exit-active {
+      opacity: 0;
+      transform: translateY(-20px);
+      transition: opacity 0.2s ease-in, transform 0.2s ease-in;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-900 pb-20">
+  <div class="max-w-3xl mx-auto p-4 pt-10">
+    <h1 class="text-4xl font-bold text-center mb-8" style="color: #4f46e5;">Gestión de Tareas</h1>
+
+    <!-- Mini resumen en la pantalla de inicio -->
+    <div id="home-summary" class="bg-white p-4 rounded-xl shadow-sm text-center mb-6 hidden">
+      <p class="text-lg font-semibold mb-1">Tienes <span id="tasksTodayCount">0</span> tareas para hoy</p>
+      <p class="text-sm text-gray-600">Última tarea completada: <span id="lastCompletedTask">Nunca</span></p>
+    </div>
+
+    <!-- Top navigation buttons for Tareas de Hoy / Todas las Tareas (only for home view) -->
+    <div id="task-nav-buttons" class="flex justify-center mb-6 space-x-2 hidden">
+      <button id="tasksTodayBtn" onclick="showTasks('today')" class="px-6 py-2 rounded-full font-semibold transition-colors shadow-sm">Tareas de Hoy</button>
+      <button id="tasksAllBtn" onclick="showTasks('all')" class="px-6 py-2 rounded-full font-semibold transition-colors shadow-sm">Todas las Tareas</button>
+    </div>
+
+    <!-- Category Filter (visible only in 'Notas') -->
+    <div id="categoryFilterContainer" class="text-center mb-6 hidden">
+      <label for="category-filter" class="block text-sm font-medium text-gray-700 mb-1">Filtrar por Categoría:</label>
+      <select id="category-filter" class="mt-1 block mx-auto w-48 pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md shadow-sm">
+        <option value="Todas">Todas</option>
+        <!-- Categories will be populated here by JS -->
+      </select>
+    </div>
+
+    <!-- Search Input (visible only in 'Notas') -->
+    <div id="notesSearchContainer" class="text-center mb-6 hidden">
+      <input type="text" id="notes-search" placeholder="Buscar notas..." class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 placeholder-gray-500">
+    </div>
+
+    <!-- Main content area for different views -->
+    <div id="main-content" class="space-y-4">
+      <!-- Home View -->
+      <div id="home-view" class="view-section">
+        <div id="tasks-today-container" class="space-y-3">
+          <!-- Tasks due today will be rendered here -->
+        </div>
+        <div id="empty-state-today" class="hidden bg-white p-6 rounded-3xl shadow-sm text-center text-lg text-gray-500 mt-4">
+          ¡Felicidades! No tienes tareas pendientes para hoy.
+        </div>
+      </div>
+
+      <!-- Tasks View -->
+      <div id="tasks-view" class="view-section hidden">
+        <div id="tasks-all-container" class="space-y-3">
+          <!-- All tasks will be rendered here -->
+        </div>
+        <div id="empty-state-all" class="hidden bg-white p-6 rounded-3xl shadow-sm text-center text-lg text-gray-500 mt-4">
+          Aún no hay tareas. ¡Añade una!
+        </div>
+      </div>
+
+      <!-- Notes View -->
+      <div id="notes-view" class="view-section hidden">
+        <div id="notes-container" class="space-y-3">
+          <!-- Notes will be rendered here -->
+        </div>
+        <div id="empty-state-notes" class="hidden bg-white p-6 rounded-3xl shadow-sm text-center text-lg text-gray-500 mt-4">
+          Aún no hay notas. ¡Añade una!
+        </div>
+      </div>
+
+      <!-- History View -->
+      <div id="history-view" class="view-section hidden">
+        <div id="history-container" class="space-y-3">
+          <!-- Completed tasks history will be rendered here -->
+        </div>
+        <div id="empty-state-history" class="hidden bg-white p-6 rounded-3xl shadow-sm text-center text-lg text-gray-500 mt-4">
+          Aún no hay historial de tareas completadas.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Floating action button (simplified) -->
+  <button id="fab-button" class="fixed bottom-24 right-6 w-14 h-14 bg-blue-600 rounded-full text-white text-3xl flex items-center justify-center shadow-lg hover:bg-blue-700 transition-colors z-50">
+    +
+  </button>
+  
+  <!-- Generic Modal for Add/Edit -->
+  <div id="generic-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50 flex items-center justify-center">
+    <div class="bg-white p-6 rounded-xl shadow-lg w-11/12 max-w-md modal-enter">
+      <h3 id="modal-title" class="text-2xl font-bold mb-4 text-center"></h3>
+      <div id="modal-form-content">
+        <!-- Form inputs will be dynamically inserted here -->
+      </div>
+      <div class="mt-6 flex justify-end space-x-3">
+        <button id="close-modal-btn" class="px-5 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition-colors">Cancelar</button>
+        <button id="save-modal-btn" class="px-5 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors">Guardar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirmation Modal -->
+  <div id="confirm-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50 flex items-center justify-center">
+    <div class="bg-white p-6 rounded-xl shadow-lg w-11/12 max-w-sm modal-enter">
+      <h3 class="text-xl font-bold mb-4 text-center">Confirmar Eliminación</h3>
+      <p class="text-gray-700 mb-6 text-center">¿Estás seguro de que quieres eliminar este elemento?</p>
+      <div class="flex justify-center space-x-4">
+        <button id="confirm-cancel-btn" class="px-5 py-2 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition-colors">Cancelar</button>
+        <button id="confirm-delete-btn" class="px-5 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors">Eliminar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Error/Message Modal -->
+  <div id="message-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50 flex items-center justify-center">
+    <div class="bg-white p-6 rounded-xl shadow-lg w-11/12 max-w-sm modal-enter">
+      <h3 id="message-modal-title" class="text-xl font-bold mb-4 text-center"></h3>
+      <p id="message-modal-content" class="text-gray-700 mb-6 text-center"></p>
+      <div class="flex justify-center">
+        <button id="message-modal-close-btn" class="px-5 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors">Entendido</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom navigation bar -->
+  <nav class="fixed bottom-0 left-0 right-0 bg-white shadow-lg p-2 flex justify-around items-center rounded-t-3xl border-t border-gray-200 z-40 h-20">
+    <a href="#" id="nav-home" class="flex flex-col items-center p-2 rounded-lg transition-colors active-nav-item">
+      <img src="https://api.iconify.design/heroicons:home-solid.svg?color=%234f46e5" alt="Inicio" class="w-6 h-6"/>
+      <span class="text-xs mt-1 text-blue-600 font-semibold">Inicio</span>
+    </a>
+    <a href="#" id="nav-notes" class="flex flex-col items-center p-2 rounded-lg transition-colors">
+      <img src="https://api.iconify.design/heroicons:document-text-solid.svg?color=%236b7280" alt="Notas" class="w-6 h-6"/>
+      <span class="text-xs mt-1 text-gray-500">Notas</span>
+    </a>
+    <a href="#" id="nav-history" class="flex flex-col items-center p-2 rounded-lg transition-colors">
+      <img src="https://api.iconify.design/heroicons:chart-bar-solid.svg?color=%236b7280" alt="Historial" class="w-6 h-6"/>
+      <span class="text-xs mt-1 text-gray-500">Historial</span>
+    </a>
+  </nav>
+
+  <script>
+    // Global variables provided by Canvas environment
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+      apiKey: "AIzaSyApVxmFp3bcogwMqaz0MQiIng6XzGwhTvY",
+      authDomain: "etxekoapp.firebaseapp.com",
+      projectId: "etxekoapp",
+      storageBucket: "etxekoapp.firebasestorage.app",
+      messagingSenderId: "1031385135784",
+      appId: "1:1031385135784:web:1018c0dadb87769495209d"
+    };
+
+    // Initialize Firebase
+    const app = firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+    const auth = firebase.auth();
+
+    let userId = null; // Will be set after authentication
+
+    // --- DOM Elements ---
+    const homeView = document.getElementById('home-view');
+    const tasksView = document.getElementById('tasks-view');
+    const notesView = document.getElementById('notes-view');
+    const historyView = document.getElementById('history-view');
+
+    const homeSummary = document.getElementById('home-summary');
+    const tasksTodayCount = document.getElementById('tasksTodayCount');
+    const lastCompletedTaskSpan = document.getElementById('lastCompletedTask');
+    const taskNavButtons = document.getElementById('task-nav-buttons');
+
+    const tasksTodayBtn = document.getElementById('tasksTodayBtn');
+    const tasksAllBtn = document.getElementById('tasksAllBtn');
+    const tasksTodayContainer = document.getElementById('tasks-today-container');
+    const tasksAllContainer = document.getElementById('tasks-all-container');
+    const notesContainer = document.getElementById('notes-container');
+    const historyContainer = document.getElementById('history-container');
+
+    const emptyStateToday = document.getElementById('empty-state-today');
+    const emptyStateAll = document.getElementById('empty-state-all');
+    const emptyStateNotes = document.getElementById('empty-state-notes');
+    const emptyStateHistory = document.getElementById('empty-state-history');
+
+    const fabButton = document.getElementById('fab-button');
+    // const fabMenu = document.getElementById('fab-menu'); // Removed: No longer needed as menu is gone
+    const genericModal = document.getElementById('generic-modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalFormContent = document.getElementById('modal-form-content');
+    const saveModalBtn = document.getElementById('save-modal-btn');
+    const closeModalBtn = document.getElementById('close-modal-btn');
+
+    const confirmModal = document.getElementById('confirm-modal');
+    const confirmCancelBtn = document.getElementById('confirm-cancel-btn');
+    const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+
+    const messageModal = document.getElementById('message-modal');
+    const messageModalTitle = document.getElementById('message-modal-title');
+    const messageModalContent = document.getElementById('message-modal-content');
+    const messageModalCloseBtn = document.getElementById('message-modal-close-btn');
+
+    const navHome = document.getElementById('nav-home');
+    const navNotes = document.getElementById('nav-notes');
+    const navHistory = document.getElementById('nav-history');
+
+    const categoryFilterContainer = document.getElementById('categoryFilterContainer');
+    const categoryFilter = document.getElementById('category-filter');
+    const notesSearchContainer = document.getElementById('notesSearchContainer');
+    const notesSearchInput = document.getElementById('notes-search');
+
+    let currentMainView = 'home'; // 'home', 'notes', 'history'
+    let currentTaskSubView = 'today'; // 'today' or 'all' for tasks
+    let selectedCategory = 'Todas'; // For filtering notes
+
+    // --- Helper for Date Calculations ---
+    const getDaysBetween = (date1, date2) => {
+        const diffTime = Math.abs(date2.getTime() - date1.getTime());
+        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    };
+
+    // This function is now more generic, calculating the 'next due date' based on recurrence type
+    const calculateNextDueDate = (lastDoneTimestamp, recurrenceType, frequencyValue, frequencyUnit, daysOfWeek) => {
+        let lastDoneDate = lastDoneTimestamp ? new Date(lastDoneTimestamp.toDate()) : null;
+        let nextDate = lastDoneDate ? new Date(lastDoneDate) : new Date();
+        nextDate.setHours(0, 0, 0, 0); // Normalize to start of day
+
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        if (!lastDoneDate) { // If never done, next due date is based on today
+            lastDoneDate = new Date(0); // Epoch for calculation
+        }
+
+        switch (recurrenceType) {
+            case 'interval':
+                let intervalDays = 0;
+                switch (frequencyUnit) {
+                    case 'weeks':
+                        intervalDays = frequencyValue * 7;
+                        break;
+                    case 'months':
+                        intervalDays = frequencyValue * 30; // Approximation for months
+                        break;
+                    case 'days':
+                    default:
+                        intervalDays = frequencyValue;
+                        break;
+                }
+                nextDate = new Date(lastDoneDate);
+                nextDate.setDate(nextDate.getDate() + intervalDays);
+                // Ensure the calculated date is not in the past relative to today if it's a first occurrence
+                if (nextDate < today && lastDoneTimestamp === null) {
+                    nextDate = today; // If never done, and calculated date is past, set to today
+                } else if (nextDate < today && lastDoneTimestamp !== null) {
+                    // If it was done, but the next calculated date is still in the past, advance it
+                    // This handles cases where frequency is very short or user hasn't marked done in a while
+                    while (nextDate < today) {
+                        nextDate.setDate(nextDate.getDate() + intervalDays);
+                    }
+                }
+                break;
+
+            case 'weekly':
+                if (!daysOfWeek || daysOfWeek.length === 0) {
+                    return null; // Invalid configuration
+                }
+                let currentCheckDate = new Date(lastDoneDate);
+                if (lastDoneTimestamp === null) { // If never done, start checking from today
+                    currentCheckDate = new Date(today);
+                    currentCheckDate.setDate(currentCheckDate.getDate() -1); // Start from yesterday to include today
+                }
+                currentCheckDate.setHours(0, 0, 0, 0);
+
+                let foundNext = false;
+                for (let i = 0; i < 14; i++) { // Check up to next 2 weeks to find a day
+                    currentCheckDate.setDate(currentCheckDate.getDate() + 1);
+                    if (daysOfWeek.includes(currentCheckDate.getDay())) {
+                        nextDate = new Date(currentCheckDate);
+                        foundNext = true;
+                        break;
+                    }
+                }
+                if (!foundNext) { // Fallback if no day found in 2 weeks (shouldn't happen with valid daysOfWeek)
+                    return null;
+                }
+                break;
+
+            // case 'monthly_day': (Future implementation)
+            //     break;
+
+            default:
+                return null; // Unknown recurrence type
+        }
+        return nextDate;
+    };
+
+
+    // --- Authentication ---
+    auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        userId = user.uid;
+        console.log("Usuario autenticado:", userId);
+        renderView(currentMainView);
+      } else {
+        // Sign in anonymously if no user is found (e.g., initial load without custom token)
+        try {
+          await auth.signInAnonymously();
+          userId = auth.currentUser.uid;
+          console.log("Iniciado sesión anónimamente:", userId);
+          renderView(currentMainView);
+        } catch (error) {
+          console.error("Error al iniciar sesión anónimamente:", error);
+          showMessageModal('Error de Autenticación', 'No se pudo iniciar sesión. Por favor, inténtalo de nuevo.');
+        }
+      }
+    });
+
+    // --- Firestore Collection References ---
+    const getUserTasksCollection = () => {
+      if (!userId) {
+        console.error("userId no está disponible. No se puede acceder a la colección de tareas.");
+        return null;
+      }
+      return db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('tareas');
+    };
+
+    const getUserNotesCollection = () => {
+      if (!userId) {
+        console.error("userId no está disponible. No se puede acceder a la colección de notas.");
+        return null;
+      }
+      return db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('notas');
+    };
+
+    // --- View Management ---
+    const hideAllViews = () => {
+      homeView.classList.add('hidden');
+      tasksView.classList.add('hidden');
+      notesView.classList.add('hidden');
+      historyView.classList.add('hidden');
+      categoryFilterContainer.classList.add('hidden');
+      notesSearchContainer.classList.add('hidden');
+      taskNavButtons.classList.add('hidden'); // Hide top task buttons by default
+      homeSummary.classList.add('hidden'); // Hide summary by default
+    };
+
+    const setActiveNavItem = (activeNavId) => {
+      document.querySelectorAll('nav a').forEach(item => {
+        item.classList.remove('active-nav-item');
+        item.querySelector('span').classList.remove('text-blue-600', 'font-semibold');
+        item.querySelector('span').classList.add('text-gray-500');
+        // Reset icon color to gray
+        const img = item.querySelector('img');
+        const src = img.src.replace(/color=%23[0-9a-fA-F]{6}/, 'color=%236b7280');
+        img.src = src;
+      });
+
+      const activeItem = document.getElementById(activeNavId);
+      if (activeItem) {
+        activeItem.classList.add('active-nav-item');
+        activeItem.querySelector('span').classList.add('text-blue-600', 'font-semibold');
+        activeItem.querySelector('span').classList.remove('text-gray-500');
+        // Set icon color to blue
+        const img = activeItem.querySelector('img');
+        const src = img.src.replace(/color=%23[0-9a-fA-F]{6}/, 'color=%234f46e5');
+        img.src = src;
+      }
+    };
+
+    const renderView = async (viewName) => {
+      if (!userId) {
+        console.log("Esperando autenticación para renderizar la vista.");
+        return; // Wait for userId to be set
+      }
+
+      currentMainView = viewName;
+      hideAllViews();
+      setActiveNavItem(`nav-${viewName}`);
+
+      switch (viewName) {
+        case 'home':
+          homeView.classList.remove('hidden');
+          taskNavButtons.classList.remove('hidden');
+          homeSummary.classList.remove('hidden');
+          await renderHomeSummary();
+          await showTasks('today');
+          break;
+        case 'notes':
+          notesView.classList.remove('hidden');
+          notesSearchContainer.classList.remove('hidden');
+          categoryFilterContainer.classList.remove('hidden');
+          await renderNotesContent();
+          break;
+        case 'history':
+          historyView.classList.remove('hidden');
+          await renderHistoryContent();
+          break;
+      }
+    };
+
+    // --- Home Summary ---
+    const renderHomeSummary = async () => {
+        const tasksCollection = getUserTasksCollection();
+        if (!tasksCollection) return;
+
+        try {
+            const snapshot = await tasksCollection.get();
+            let tasksDueToday = 0;
+            let latestCompletedDate = null;
+
+            const now = new Date();
+            now.setHours(0, 0, 0, 0);
+
+            snapshot.forEach(doc => {
+                const task = doc.data();
+                const lastDoneDate = task.completedDates && task.completedDates.length > 0 ?
+                    new Date(task.completedDates[task.completedDates.length - 1].toDate()) : null;
+                const postponedUntilDate = task.postponedUntil ? new Date(task.postponedUntil.toDate()) : null;
+
+                const nextDueDate = calculateNextDueDate(
+                    task.completedDates && task.completedDates.length > 0 ? task.completedDates[task.completedDates.length - 1] : null,
+                    task.recurrenceType || 'interval', // Default to interval for old tasks
+                    task.frequencyValue,
+                    task.frequencyUnit,
+                    task.daysOfWeek
+                );
+
+                const isDue = nextDueDate && nextDueDate <= now;
+                const isPostponed = postponedUntilDate && postponedUntilDate > now;
+
+                if (isDue && !isPostponed) {
+                    tasksDueToday++;
+                }
+
+                if (lastDoneDate && (!latestCompletedDate || lastDoneDate > latestCompletedDate)) {
+                    latestCompletedDate = lastDoneDate;
+                }
+            });
+
+            tasksTodayCount.textContent = tasksDueToday;
+            if (latestCompletedDate) {
+                const daysAgo = getDaysBetween(now, latestCompletedDate);
+                lastCompletedTaskSpan.textContent = `${daysAgo === 0 ? 'hoy' : `hace ${daysAgo} día${daysAgo !== 1 ? 's' : ''}`}`;
+            } else {
+                lastCompletedTaskSpan.textContent = 'Nunca';
+            }
+
+        } catch (error) {
+            console.error("Error al cargar resumen de inicio:", error);
+            showMessageModal('Error', 'No se pudo cargar el resumen de tareas.');
+        }
+    };
+
+    // --- Task Management ---
+    const showTasks = async (subView) => {
+      currentTaskSubView = subView;
+      tasksTodayContainer.innerHTML = '';
+      tasksAllContainer.innerHTML = '';
+      emptyStateToday.classList.add('hidden');
+      emptyStateAll.classList.add('hidden');
+
+      // Update button styles
+      tasksTodayBtn.classList.remove('btn-active', 'btn-inactive');
+      tasksAllBtn.classList.remove('btn-active', 'btn-inactive');
+
+      if (subView === 'today') {
+        tasksTodayBtn.classList.add('btn-active');
+        tasksAllBtn.classList.add('btn-inactive');
+        await renderHomeContent();
+      } else if (subView === 'all') {
+        tasksAllBtn.classList.add('btn-active');
+        tasksTodayBtn.classList.add('btn-inactive');
+        await renderTasksContent();
+      }
+    };
+
+    const renderHomeContent = async () => {
+      const tasksCollection = getUserTasksCollection();
+      if (!tasksCollection) return;
+
+      tasksTodayContainer.innerHTML = '';
+      emptyStateToday.classList.add('hidden');
+
+      const now = new Date();
+      now.setHours(0, 0, 0, 0);
+
+      try {
+        const snapshot = await tasksCollection.get();
+        let tasksDue = [];
+        snapshot.forEach(doc => {
+          const task = doc.data();
+          const postponedUntilDate = task.postponedUntil ? new Date(task.postponedUntil.toDate()) : null;
+
+          const nextDueDate = calculateNextDueDate(
+              task.completedDates && task.completedDates.length > 0 ? task.completedDates[task.completedDates.length - 1] : null,
+              task.recurrenceType || 'interval',
+              task.frequencyValue,
+              task.frequencyUnit,
+              task.daysOfWeek
+          );
+          
+          const isDue = nextDueDate && nextDueDate <= now;
+          const isPostponed = postponedUntilDate && postponedUntilDate > now;
+
+          if (isDue && !isPostponed) {
+            tasksDue.push({ id: doc.id, ...task, nextDueDate: nextDueDate });
+          }
+        });
+
+        if (tasksDue.length === 0) {
+          emptyStateToday.classList.remove('hidden');
+        } else {
+          tasksDue.forEach(task => {
+            const isOverdue = task.nextDueDate && task.nextDueDate < now; // Task is overdue if its next due date is in the past
+
+            const div = document.createElement('div');
+            div.className = `bg-white p-4 rounded-xl shadow-sm flex items-center justify-between transition-all duration-300 ease-in-out transform hover:scale-[1.01] ${isOverdue ? 'border-l-4 border-red-500' : ''}`;
+            div.innerHTML = `
+              <div>
+                <strong class="text-base">${task.name} ${isOverdue ? '<span class="text-red-500 text-sm ml-2 font-bold">¡ATRASADA!</span>' : ''}</strong>
+                <div class="text-sm text-gray-500">${task.zone}</div>
+                ${task.tags && task.tags.length > 0 ? `<div class="text-xs text-blue-400 mt-1">${task.tags.map(tag => `#${tag}`).join(' ')}</div>` : ''}
+              </div>
+              <div class="flex space-x-2">
+                <button class="mark-done-btn px-4 py-2 bg-blue-500 text-white rounded-full text-sm font-medium hover:bg-blue-600 transition-colors" data-id="${task.id}">Hecho</button>
+                <button class="postpone-btn px-4 py-2 bg-yellow-500 text-white rounded-full text-sm font-medium hover:bg-yellow-600 transition-colors" data-id="${task.id}">Posponer</button>
+              </div>
+            `;
+            tasksTodayContainer.appendChild(div);
+          });
+
+          // Add event listeners after elements are in DOM
+          tasksTodayContainer.querySelectorAll('.mark-done-btn').forEach(button => {
+            button.onclick = async (e) => {
+              const taskId = e.target.dataset.id;
+              const tasksCollection = getUserTasksCollection();
+              if (!tasksCollection) return;
+              try {
+                await tasksCollection.doc(taskId).update({
+                  completedDates: firebase.firestore.FieldValue.arrayUnion(new Date()),
+                  postponedUntil: null
+                });
+                renderHomeContent(); // Re-render to update list
+                renderHomeSummary(); // Update summary
+              }
+              catch (error) {
+                console.error("Error al marcar tarea como hecha:", error);
+                showMessageModal('Error', 'No se pudo marcar la tarea como hecha.');
+              }
+            };
+          });
+
+          tasksTodayContainer.querySelectorAll('.postpone-btn').forEach(button => {
+            button.onclick = async (e) => {
+              const taskId = e.target.dataset.id;
+              const tomorrow = new Date();
+              tomorrow.setDate(tomorrow.getDate() + 1);
+              tomorrow.setHours(0, 0, 0, 0); // Postpone until start of tomorrow
+              const tasksCollection = getUserTasksCollection();
+              if (!tasksCollection) return;
+              try {
+                await tasksCollection.doc(taskId).update({ postponedUntil: tomorrow });
+                renderHomeContent(); // Re-render to update list
+                renderHomeSummary(); // Update summary
+              }
+              catch (error) {
+                console.error("Error al posponer tarea:", error);
+                showMessageModal('Error', 'No se pudo posponer la tarea.');
+              }
+            };
+          });
+        }
+      }
+      catch (error) {
+        console.error("Error al cargar tareas para hoy:", error);
+        showMessageModal('Error', 'No se pudieron cargar las tareas para hoy.');
+      }
+    };
+
+    const renderTasksContent = async () => {
+      const tasksCollection = getUserTasksCollection();
+      if (!tasksCollection) return;
+
+      tasksAllContainer.innerHTML = '';
+      emptyStateAll.classList.add('hidden');
+
+      try {
+        const snapshot = await tasksCollection.get();
+        console.log("Tareas cargadas para 'Todas las tareas':", snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        let tasks = [];
+        snapshot.forEach(doc => {
+          const task = doc.data();
+          tasks.push({ id: doc.id, ...task });
+        });
+
+        // Sort tasks by name for consistent display
+        tasks.sort((a, b) => a.name.localeCompare(b.name));
+
+        if (tasks.length === 0) {
+          emptyStateAll.classList.remove('hidden');
+        } else {
+          tasks.forEach(task => {
+            const lastDoneDate = task.completedDates && task.completedDates.length > 0 ?
+              new Date(task.completedDates[task.completedDates.length - 1].toDate()) : null;
+            const nextDueDate = calculateNextDueDate(
+                task.completedDates && task.completedDates.length > 0 ? task.completedDates[task.completedDates.length - 1] : null,
+                task.recurrenceType || 'interval',
+                task.frequencyValue,
+                task.frequencyUnit,
+                task.daysOfWeek
+            );
+            console.log(`Tarea: ${task.name}, Próxima prevista: ${nextDueDate ? nextDueDate.toLocaleDateString() : 'N/A'}`);
+
+            const isOverdue = nextDueDate && nextDueDate < new Date().setHours(0,0,0,0); // Task is overdue if its next due date is in the past (start of today)
+
+            const recurrenceDisplay = () => {
+                if (task.recurrenceType === 'weekly' && task.daysOfWeek && task.daysOfWeek.length > 0) {
+                    const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+                    return `Semanal: ${task.daysOfWeek.map(d => dayNames[d]).join(', ')}`;
+                } else if (task.recurrenceType === 'interval') {
+                    return `Cada ${task.frequencyValue} ${task.frequencyUnit}`;
+                }
+                return 'Sin recurrencia';
+            };
+
+            const div = document.createElement('div');
+            div.className = `bg-white p-4 rounded-xl shadow-sm flex items-center justify-between transition-all duration-300 ease-in-out transform hover:scale-[1.01] ${isOverdue ? 'border-l-4 border-red-500' : ''}`;
+            div.innerHTML = `
+              <div>
+                <div class="font-semibold text-base">${task.name} ${isOverdue ? '<span class="text-red-500 text-sm ml-2 font-bold">¡ATRASADA!</span>' : ''}</div>
+                <div class="text-sm text-gray-600">Zona: ${task.zone}</div>
+                <div class="text-sm text-gray-600">Recurrencia: ${recurrenceDisplay()}</div>
+                <div class="text-sm text-gray-500">Última vez: ${lastDoneDate ? lastDoneDate.toLocaleDateString() : "Nunca"}</div>
+                <div class="text-sm text-blue-500">Próxima prevista: ${nextDueDate ? nextDueDate.toLocaleDateString() : 'N/A'}</div>
+                ${task.tags && task.tags.length > 0 ? `<div class="text-xs text-blue-400 mt-1">${task.tags.map(tag => `#${tag}`).join(' ')}</div>` : ''}
+              </div>
+              <div class="flex space-x-2">
+                <button class="edit-task-btn p-2 bg-gray-200 rounded-full hover:bg-gray-300 transition-colors" data-id="${task.id}">
+                  <img src="https://api.iconify.design/heroicons:pencil-solid.svg?color=%234f46e5" class="w-5 h-5" alt="Editar"/>
+                </button>
+                <button class="delete-task-btn p-2 bg-red-100 rounded-full hover:bg-red-200 transition-colors" data-id="${task.id}">
+                  <img src="https://api.iconify.design/heroicons:trash-solid.svg?color=%23dc2626" class="w-5 h-5" alt="Eliminar"/>
+                </button>
+              </div>
+            `;
+            tasksAllContainer.appendChild(div);
+          });
+
+          // Add event listeners
+          tasksAllContainer.querySelectorAll('.edit-task-btn').forEach(button => {
+            button.onclick = (e) => {
+              const taskId = e.currentTarget.dataset.id;
+              const taskToEdit = tasks.find(t => t.id === taskId);
+              if (taskToEdit) {
+                openModal('edit-task', taskToEdit);
+              }
+            };
+          });
+
+          tasksAllContainer.querySelectorAll('.delete-task-btn').forEach(button => {
+            button.onclick = (e) => {
+              const taskId = e.currentTarget.dataset.id;
+              openConfirmModal(async () => {
+                const tasksCollection = getUserTasksCollection();
+                if (!tasksCollection) return;
+                try {
+                  await tasksCollection.doc(taskId).delete();
+                  renderTasksContent(); // Re-render
+                  renderHomeSummary(); // Update summary
+                }
+                catch (error) {
+                  console.error("Error al eliminar tarea:", error);
+                  showMessageModal('Error', 'No se pudo eliminar la tarea.');
+                }
+              });
+            };
+          });
+        }
+
+        // Populate category filter only with categories from notes
+        const notesCollection = getUserNotesCollection();
+        if (notesCollection) {
+          const notesSnapshot = await notesCollection.get();
+          let noteCategories = new Set(['Todas']);
+          notesSnapshot.forEach(doc => {
+            const note = doc.data();
+            if (note.category) noteCategories.add(note.category);
+          });
+          populateCategoryFilter(Array.from(noteCategories));
+        }
+
+      }
+      catch (error) {
+        console.error("Error al cargar todas las tareas:", error);
+        showMessageModal('Error', 'No se pudieron cargar todas las tareas.');
+      }
+    };
+
+    // --- Notes Management ---
+    const renderNotesContent = async (searchTerm = '') => {
+      const notesCollection = getUserNotesCollection();
+      if (!notesCollection) return;
+
+      notesContainer.innerHTML = '';
+      emptyStateNotes.classList.add('hidden');
+
+      try {
+        let query = notesCollection;
+        if (selectedCategory !== 'Todas') {
+          query = query.where('category', '==', selectedCategory);
+        }
+        const snapshot = await query.get();
+        let notes = [];
+        let categories = new Set(['Todas']);
+        snapshot.forEach(doc => {
+          const note = doc.data();
+          notes.push({ id: doc.id, ...note });
+          if (note.category) categories.add(note.category);
+        });
+
+        // Filter by search term
+        const filteredNotes = notes.filter(note => {
+          const matchesSearch = searchTerm === '' ||
+                                note.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                note.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                (note.tags && note.tags.some(tag => tag.toLowerCase().includes(searchTerm.toLowerCase())));
+          return matchesSearch;
+        });
+
+        // Sort notes by title
+        filteredNotes.sort((a, b) => a.title.localeCompare(b.title));
+
+        if (filteredNotes.length === 0) {
+          emptyStateNotes.classList.remove('hidden');
+        } else {
+          filteredNotes.forEach(note => {
+            const div = document.createElement('div');
+            div.className = "bg-white p-4 rounded-xl shadow-sm transition-all duration-300 ease-in-out transform hover:scale-[1.01]";
+            div.innerHTML = `
+              <div class="font-bold text-lg">${note.title}</div>
+              <div class="text-sm text-gray-500 mb-2">${note.category || 'Sin categoría'}</div>
+              <p class="text-gray-700 text-sm">${note.content.substring(0, 150)}${note.content.length > 150 ? '...' : ''}</p>
+              ${note.tags && note.tags.length > 0 ? `<div class="text-xs text-blue-400 mt-2">${note.tags.map(tag => `#${tag}`).join(' ')}</div>` : ''}
+              <div class="flex justify-end space-x-2 mt-3">
+                <button class="edit-note-btn p-2 bg-gray-200 rounded-full hover:bg-gray-300 transition-colors" data-id="${note.id}">
+                  <img src="https://api.iconify.design/heroicons:pencil-solid.svg?color=%234f46e5" class="w-5 h-5" alt="Editar"/>
+                </button>
+                <button class="delete-note-btn p-2 bg-red-100 rounded-full hover:bg-red-200 transition-colors" data-id="${note.id}">
+                  <img src="https://api.iconify.design/heroicons:trash-solid.svg?color=%23dc2626" class="w-5 h-5" alt="Eliminar"/>
+                </button>
+              </div>
+            `;
+            notesContainer.appendChild(div);
+          });
+
+          // Add event listeners
+          notesContainer.querySelectorAll('.edit-note-btn').forEach(button => {
+            button.onclick = (e) => {
+              const noteId = e.currentTarget.dataset.id;
+              const noteToEdit = notes.find(n => n.id === noteId);
+              if (noteToEdit) {
+                openModal('edit-note', noteToEdit);
+              }
+            };
+          });
+
+          notesContainer.querySelectorAll('.delete-note-btn').forEach(button => {
+            button.onclick = (e) => {
+              const noteId = e.currentTarget.dataset.id;
+              openConfirmModal(async () => {
+                const notesCollection = getUserNotesCollection();
+                if (!notesCollection) return;
+                try {
+                  await notesCollection.doc(noteId).delete();
+                  renderNotesContent(); // Re-render
+                }
+                catch (error) {
+                  console.error("Error al eliminar nota:", error);
+                  showMessageModal('Error', 'No se pudo eliminar la nota.');
+                }
+              });
+            };
+          });
+        }
+        populateCategoryFilter(Array.from(categories));
+      }
+      catch (error) {
+        console.error("Error al cargar notas:", error);
+        showMessageModal('Error', 'No se pudieron cargar las notas.');
+      }
+    };
+
+    // --- History Management ---
+    const renderHistoryContent = async () => {
+      const tasksCollection = getUserTasksCollection();
+      if (!tasksCollection) return;
+
+      historyContainer.innerHTML = '';
+      emptyStateHistory.classList.add('hidden');
+
+      try {
+        // Fetch all tasks and filter in memory to avoid Firestore orderBy limitations
+        const snapshot = await tasksCollection.get();
+        let completedTasks = [];
+        snapshot.forEach(doc => {
+          const task = doc.data();
+          if (task.completedDates && task.completedDates.length > 0) {
+            // Add an entry for each completion date
+            task.completedDates.forEach(dateTimestamp => {
+                completedTasks.push({
+                    id: doc.id,
+                    name: task.name,
+                    zone: task.zone,
+                    completedAt: new Date(dateTimestamp.toDate()) // Convert Firestore Timestamp to Date
+                });
+            });
+          }
+        });
+
+        // Sort by completedAt date, most recent first
+        completedTasks.sort((a, b) => b.completedAt.getTime() - a.completedAt.getTime());
+
+        if (completedTasks.length === 0) {
+          emptyStateHistory.classList.remove('hidden');
+        } else {
+          completedTasks.forEach(item => {
+            const div = document.createElement('div');
+            div.className = "bg-white p-4 rounded-xl shadow-sm transition-all duration-300 ease-in-out transform hover:scale-[1.01]";
+            div.innerHTML = `
+              <div class="font-semibold text-base">${item.name}</div>
+              <div class="text-sm text-gray-600">Zona: ${item.zone}</div>
+              <div class="text-sm text-gray-500">Completada el: ${item.completedAt.toLocaleDateString()}</div>
+            `;
+            historyContainer.appendChild(div);
+          });
+        }
+      }
+      catch (error) {
+        console.error("Error al cargar historial de tareas:", error);
+        showMessageModal('Error', 'No se pudo cargar el historial de tareas.');
+      }
+    };
+
+    // --- Modal Logic ---
+    let currentModalType = '';
+    let currentModalData = null;
+
+    const openModal = (type, data = null) => {
+      currentModalType = type;
+      currentModalData = data;
+      modalFormContent.innerHTML = ''; // Clear previous content
+
+      let recurrenceType = data ? data.recurrenceType || 'interval' : 'interval';
+      let frequencyValue = data ? data.frequencyValue || '' : '';
+      let frequencyUnit = data ? data.frequencyUnit || 'days' : 'days';
+      let daysOfWeek = data ? data.daysOfWeek || [] : [];
+      let tags = data ? (data.tags ? data.tags.join(', ') : '') : '';
+
+      const getRecurrenceFieldsHtml = (currentType, currentFreqValue, currentFreqUnit, currentDaysOfWeek) => {
+        const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+        const daysHtml = dayNames.map((day, index) => `
+          <label class="inline-flex items-center mr-3">
+            <input type="checkbox" class="form-checkbox h-4 w-4 text-blue-600" value="${index}" ${currentDaysOfWeek.includes(index) ? 'checked' : ''}>
+            <span class="ml-1 text-sm">${day}</span>
+          </label>
+        `).join('');
+
+        return `
+          <div class="mb-3">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Tipo de recurrencia:</label>
+            <div class="flex space-x-4">
+              <label class="inline-flex items-center">
+                <input type="radio" name="recurrenceType" value="interval" class="form-radio h-4 w-4 text-blue-600" ${currentType === 'interval' ? 'checked' : ''}>
+                <span class="ml-2 text-sm">Por Intervalo</span>
+              </label>
+              <label class="inline-flex items-center">
+                <input type="radio" name="recurrenceType" value="weekly" class="form-radio h-4 w-4 text-blue-600" ${currentType === 'weekly' ? 'checked' : ''}>
+                <span class="ml-2 text-sm">Semanalmente</span>
+              </label>
+            </div>
+          </div>
+
+          <div id="interval-fields" class="${currentType === 'interval' ? '' : 'hidden'}">
+            <div class="flex items-center mb-3 space-x-2">
+                <input type="number" id="task-frequency-value" class="w-1/2 border p-3 rounded-md focus:ring-blue-500 focus:border-blue-500 placeholder-gray-500" placeholder="Valor" value="${currentFreqValue}">
+                <select id="task-frequency-unit" class="w-1/2 border p-3 rounded-md focus:ring-blue-500 focus:border-blue-500">
+                    <option value="days" ${currentFreqUnit === 'days' ? 'selected' : ''}>Días</option>
+                    <option value="weeks" ${currentFreqUnit === 'weeks' ? 'selected' : ''}>Semanas</option>
+                    <option value="months" ${currentFreqUnit === 'months' ? 'selected' : ''}>Meses</option>
+                </select>
+            </div>
+          </div>
+
+          <div id="weekly-fields" class="${currentType === 'weekly' ? '' : 'hidden'}">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Días de la semana:</label>
+            <div class="flex flex-wrap -mx-1 mb-3">
+              ${daysHtml}
+            </div>
+          </div>
+        `;
+      };
+
+
+      if (type === 'add-task' || type === 'edit-task') {
+        modalTitle.textContent = type === 'add-task' ? 'Añadir Nueva Tarea' : 'Editar Tarea';
+        modalFormContent.innerHTML = `
+          <input id="task-name" class="w-full border p-3 mb-3 rounded-md focus:ring-blue-500 focus:border-blue-500 placeholder-gray-500" placeholder="Nombre de la tarea" value="${data ? data.name || '' : ''}">
+          <input id="task-zone" class="w-full border p-3 mb-3 rounded-md focus:ring-blue-500 focus:border-blue-500 placeholder-gray-500" placeholder="Zona (ej. Cocina, Baño)" value="${data ? data.zone || '' : ''}">
+          ${getRecurrenceFieldsHtml(recurrenceType, frequencyValue, frequencyUnit, daysOfWeek)}
+          <input id="task-tags" class="w-full border p-3 mb-3 rounded-md focus:ring-blue-500 focus:border-blue-500 placeholder-gray-500" placeholder="Etiquetas (separadas por comas, ej. #limpieza, #diario)" value="${tags}">
+        `;
+
+        // Add event listeners for recurrence type radio buttons
+        document.querySelectorAll('input[name="recurrenceType"]').forEach(radio => {
+          radio.addEventListener('change', (e) => {
+            const selectedType = e.target.value;
+            document.getElementById('interval-fields').classList.toggle('hidden', selectedType !== 'interval');
+            document.getElementById('weekly-fields').classList.toggle('hidden', selectedType !== 'weekly');
+          });
+        });
+
+      } else if (type === 'add-note' || type === 'edit-note') {
+        modalTitle.textContent = type === 'add-note' ? 'Añadir Nueva Nota' : 'Editar Nota';
+        modalFormContent.innerHTML = `
+          <input id="note-title" class="w-full border p-3 mb-3 rounded-md focus:ring-blue-500 focus:border-blue-500 placeholder-gray-500" placeholder="Título de la nota" value="${data ? data.title || '' : ''}">
+          <textarea id="note-content" class="w-full border p-3 mb-3 rounded-md focus:ring-blue-500 focus:border-blue-500 h-32 resize-y placeholder-gray-500" placeholder="Contenido de la nota">${data ? data.content || '' : ''}</textarea>
+          <input id="note-category" class="w-full border p-3 mb-3 rounded-md focus:ring-blue-500 focus:border-blue-500 placeholder-gray-500" placeholder="Categoría (ej. Receta, Idea)" value="${data ? data.category || '' : ''}">
+          <input id="note-tags" class="w-full border p-3 mb-3 rounded-md focus:ring-blue-500 focus:border-blue-500 placeholder-gray-500" placeholder="Etiquetas (separadas por comas, ej. #cocina, #personal)" value="${data ? (data.tags ? data.tags.join(', ') : '') : ''}">
+        `;
+      }
+      genericModal.classList.remove('hidden');
+      genericModal.querySelector('.modal-enter').classList.add('modal-enter-active');
+    };
+
+    const closeModal = () => {
+      genericModal.querySelector('.modal-enter').classList.remove('modal-enter-active');
+      genericModal.querySelector('.modal-enter').classList.add('modal-exit-active');
+      setTimeout(() => {
+        genericModal.classList.add('hidden');
+        genericModal.querySelector('.modal-enter').classList.remove('modal-exit-active');
+      }, 200); // Match transition duration
+    };
+
+    const handleSaveModal = async () => {
+      if (!userId) {
+        showMessageModal('Error', 'No se pudo guardar. Usuario no autenticado.');
+        return;
+      }
+
+      try {
+        if (currentModalType === 'add-task' || currentModalType === 'edit-task') {
+          const name = document.getElementById('task-name').value;
+          const zone = document.getElementById('task-zone').value;
+          const tagsInput = document.getElementById('task-tags').value;
+          const tags = tagsInput ? tagsInput.split(',').map(tag => tag.trim()).filter(tag => tag !== '') : [];
+          
+          const recurrenceType = document.querySelector('input[name="recurrenceType"]:checked').value;
+          let taskData = { name, zone, tags, recurrenceType };
+
+          if (recurrenceType === 'interval') {
+            const frequencyValue = parseInt(document.getElementById('task-frequency-value').value);
+            const frequencyUnit = document.getElementById('task-frequency-unit').value;
+            if (isNaN(frequencyValue) || frequencyValue <= 0) {
+              showMessageModal('Error', 'Por favor, introduce un valor de frecuencia válido para la recurrencia por intervalo.');
+              return;
+            }
+            taskData.frequencyValue = frequencyValue;
+            taskData.frequencyUnit = frequencyUnit;
+          } else if (recurrenceType === 'weekly') {
+            const selectedDays = Array.from(document.querySelectorAll('#weekly-fields input[type="checkbox"]:checked'))
+                                .map(cb => parseInt(cb.value));
+            if (selectedDays.length === 0) {
+              showMessageModal('Error', 'Por favor, selecciona al menos un día de la semana para la recurrencia semanal.');
+              return;
+            }
+            taskData.daysOfWeek = selectedDays;
+          }
+
+          if (!name || !zone) { // Basic validation
+            showMessageModal('Error', 'Por favor, rellena el nombre y la zona de la tarea.');
+            return;
+          }
+
+          const tasksCollection = getUserTasksCollection();
+          if (!tasksCollection) {
+            console.error("Error: Colección de tareas no disponible.");
+            showMessageModal('Error', 'No se pudo acceder a la base de datos de tareas.');
+            return;
+          }
+
+          if (currentModalType === 'add-task') {
+            const dataToAdd = {
+                name: taskData.name,
+                zone: taskData.zone,
+                tags: taskData.tags,
+                recurrenceType: taskData.recurrenceType,
+                completedDates: [],
+                postponedUntil: null
+            };
+
+            if (taskData.recurrenceType === 'interval') {
+                dataToAdd.frequencyValue = taskData.frequencyValue;
+                dataToAdd.frequencyUnit = taskData.frequencyUnit;
+            } else if (taskData.recurrenceType === 'weekly') {
+                dataToAdd.daysOfWeek = taskData.daysOfWeek;
+            }
+            
+            console.log("Añadiendo nueva tarea:", dataToAdd);
+            await tasksCollection.add(dataToAdd);
+            console.log("Tarea añadida exitosamente.");
+          } else { // edit-task
+            const updateData = { ...taskData };
+            // Explicitly delete fields if recurrence type changes from one to another
+            if (recurrenceType === 'interval' && currentModalData.recurrenceType === 'weekly') {
+                updateData.daysOfWeek = firebase.firestore.FieldValue.delete();
+            } else if (recurrenceType === 'weekly' && currentModalData.recurrenceType === 'interval') {
+                updateData.frequencyValue = firebase.firestore.FieldValue.delete();
+                updateData.frequencyUnit = firebase.firestore.FieldValue.delete();
+            }
+            console.log("Actualizando tarea:", currentModalData.id, updateData);
+            await tasksCollection.doc(currentModalData.id).update(updateData);
+            console.log("Tarea actualizada exitosamente.");
+          }
+          closeModal();
+          if (currentMainView === 'home') {
+            await showTasks('today');
+          } else if (currentMainView === 'tasks') {
+            await showTasks('all');
+          }
+          renderHomeSummary(); // Update summary after task changes
+        } else if (currentModalType === 'add-note' || currentModalType === 'edit-note') {
+          const title = document.getElementById('note-title').value;
+          const content = document.getElementById('note-content').value;
+          const category = document.getElementById('note-category').value;
+          const tagsInput = document.getElementById('note-tags').value;
+          const tags = tagsInput ? tagsInput.split(',').map(tag => tag.trim()).filter(tag => tag !== '') : [];
+
+          if (!title || !content) {
+            showMessageModal('Error', 'Por favor, rellena el título y el contenido de la nota.');
+            return;
+          }
+
+          const notesCollection = getUserNotesCollection();
+          if (!notesCollection) {
+            console.error("Error: Colección de notas no disponible.");
+            showMessageModal('Error', 'No se pudo acceder a la base de datos de notas.');
+            return;
+          }
+
+          if (currentModalType === 'add-note') {
+            console.log("Añadiendo nueva nota:", { title, content, category, tags, createdAt: new Date() });
+            await notesCollection.add({ title, content, category, tags, createdAt: new Date() });
+            console.log("Nota añadida exitosamente.");
+          } else { // edit-note
+            console.log("Actualizando nota:", currentModalData.id, { title, content, category, tags });
+            await notesCollection.doc(currentModalData.id).update({ title, content, category, tags });
+            console.log("Nota actualizada exitosamente.");
+          }
+          closeModal();
+          await renderNotesContent(notesSearchInput.value);
+        }
+      }
+      catch (error) {
+        console.error("Error general al guardar/actualizar:", error);
+        showMessageModal('Error de Guardado', `Ocurrió un error al guardar los datos: ${error.message}.`);
+      }
+    };
+
+    // --- Confirmation Modal Logic ---
+    let confirmAction = null;
+    const openConfirmModal = (action) => {
+      confirmAction = action;
+      confirmModal.classList.remove('hidden');
+      confirmModal.querySelector('.modal-enter').classList.add('modal-enter-active');
+    };
+
+    const closeConfirmModal = () => {
+      confirmModal.querySelector('.modal-enter').classList.remove('modal-enter-active');
+      confirmModal.querySelector('.modal-enter').classList.add('modal-exit-active');
+      setTimeout(() => {
+        confirmModal.classList.add('hidden');
+        confirmModal.querySelector('.modal-enter').classList.remove('modal-exit-active');
+        confirmAction = null;
+      }, 200);
+    };
+
+    confirmCancelBtn.onclick = closeConfirmModal;
+    confirmDeleteBtn.onclick = () => {
+      if (confirmAction) {
+        confirmAction();
+      }
+      closeConfirmModal();
+    };
+
+    // --- Generic Message Modal ---
+    const showMessageModal = (title, message) => {
+        messageModalTitle.textContent = title;
+        messageModalContent.textContent = message;
+        messageModal.classList.remove('hidden');
+        messageModal.querySelector('.modal-enter').classList.add('modal-enter-active');
+    };
+
+    messageModalCloseBtn.onclick = () => {
+        messageModal.querySelector('.modal-enter').classList.remove('modal-enter-active');
+        messageModal.querySelector('.modal-enter').classList.add('modal-exit-active');
+        setTimeout(() => {
+            messageModal.classList.add('hidden');
+            messageModal.querySelector('.modal-enter').classList.remove('modal-exit-active');
+        }, 200);
+    };
+
+
+    // --- Category Filter Logic ---
+    const populateCategoryFilter = (categories) => {
+      categoryFilter.innerHTML = '';
+      const allOption = document.createElement('option');
+      allOption.value = 'Todas';
+      allOption.textContent = 'Todas';
+      categoryFilter.appendChild(allOption);
+
+      categories.sort().forEach(cat => { // Sort categories alphabetically
+        if (cat !== 'Todas') {
+          const option = document.createElement('option');
+          option.value = cat;
+          option.textContent = cat;
+          categoryFilter.appendChild(option);
+        }
+      });
+      categoryFilter.value = selectedCategory; // Set selected value
+    };
+
+    categoryFilter.onchange = async (e) => {
+      selectedCategory = e.target.value;
+      // Category filter is now only for notes, so only re-render notes
+      if (currentMainView === 'notes') {
+        await renderNotesContent(notesSearchInput.value);
+      }
+    };
+
+    notesSearchInput.oninput = async (e) => {
+      const searchTerm = e.target.value;
+      if (currentMainView === 'notes') {
+        await renderNotesContent(searchTerm);
+      }
+    };
+
+    // --- FAB Button Direct Action ---
+    fabButton.onclick = () => {
+      if (currentMainView === 'home' || currentMainView === 'tasks') {
+        openModal('add-task');
+      } else if (currentMainView === 'notes') {
+        openModal('add-note');
+      }
+      // No need to toggle fabMenu classes or button text as the menu is removed
+    };
+
+    // --- Event Listeners ---
+    closeModalBtn.onclick = closeModal;
+    saveModalBtn.onclick = handleSaveModal;
+
+    // Bottom navigation
+    navHome.onclick = (e) => { e.preventDefault(); renderView('home'); };
+    navNotes.onclick = (e) => { e.preventDefault(); renderView('notes'); };
+    navHistory.onclick = (e) => { e.preventDefault(); renderView('history'); };
+  </script>
+</body>
+</html>
