@@ -745,10 +745,19 @@
         import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-storage.js";
 
 
-        // Firebase Config (obtenida del entorno de Canvas)
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        // Firebase Config (obtenida del entorno de Canvas o hardcodeada para producción)
+        const firebaseConfig = typeof __firebase_config !== 'undefined' && __firebase_config ? 
+            JSON.parse(__firebase_config) : 
+            {
+                apiKey: "AIzaSyApVxmFp3bcogwMqaz0MQiIng6XzGwhTvY",
+                authDomain: "etxekoapp.firebaseapp.com",
+                projectId: "etxekoapp",
+                storageBucket: "etxekoapp.firebasestorage.app",
+                messagingSenderId: "1031385135784",
+                appId: "1:1031385135784:web:1018c0dadb87769495209d"
+            };
 
-        // App ID (obtenido del entorno de Canvas)
+        // App ID (obtenido del entorno de Canvas o hardcodeado para producción)
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
         // Inicializa Firebase
@@ -1550,38 +1559,47 @@
             let attachmentPath = null;
             let attachmentName = null;
 
-            fileUploadStatus.style.display = 'block';
-            fileUploadStatus.textContent = 'Subiendo archivo...';
-            fileUploadStatus.classList.remove('error', 'success');
+            // Si estamos editando y no se ha seleccionado un nuevo archivo, mantener el adjunto existente
+            if (noteId) {
+                const noteRef = doc(getNotesCollectionRef(), noteId);
+                const noteDocSnap = await getDoc(noteRef);
+                const noteData = noteDocSnap.data();
+                if (noteData && noteData.attachmentURL && noteData.attachmentPath && noteData.attachmentName && existingAttachmentDisplay.style.display === 'flex') {
+                    attachmentURL = noteData.attachmentURL;
+                    attachmentPath = noteData.attachmentPath;
+                    attachmentName = noteData.attachmentName;
+                }
+            }
 
-            try {
-                if (file) {
-                    // Si hay un archivo nuevo, lo subimos
+            // Si hay un archivo nuevo para subir
+            if (file) {
+                fileUploadStatus.style.display = 'block';
+                fileUploadStatus.textContent = 'Subiendo archivo...';
+                fileUploadStatus.classList.remove('error', 'success');
+
+                try {
                     const fileName = `${Date.now()}_${file.name}`;
-                    const storageRef = ref(storage, `artifacts/${appId}/users/${currentUserId}/notes/${noteId || 'temp'}/${fileName}`); // Usar ID de nota si existe, sino temp
+                    // La ruta del storage debe incluir el ID de la nota para que sea única y fácil de gestionar
+                    // Si es una nueva nota, usaremos un ID temporal hasta que se cree el documento de Firestore
+                    const storagePath = `artifacts/${appId}/users/${currentUserId}/notes/${noteId || 'temp_note_id'}/${fileName}`;
+                    const storageRef = ref(storage, storagePath); 
                     const uploadTask = await uploadBytes(storageRef, file);
                     attachmentURL = await getDownloadURL(uploadTask.ref);
                     attachmentPath = storageRef.fullPath;
                     attachmentName = file.name;
                     fileUploadStatus.textContent = `Archivo '${attachmentName}' subido.`;
                     fileUploadStatus.classList.add('success');
-                } else if (noteId) {
-                    // Si estamos editando y no hay un nuevo archivo, mantener el existente
-                    const noteRef = doc(getNotesCollectionRef(), noteId);
-                    const noteDocSnap = await getDoc(noteRef);
-                    const noteData = noteDocSnap.data();
-                    if (noteData.attachmentURL && noteData.attachmentPath && noteData.attachmentName && existingAttachmentDisplay.style.display === 'flex') {
-                        attachmentURL = noteData.attachmentURL;
-                        attachmentPath = noteData.attachmentPath;
-                        attachmentName = noteData.attachmentName;
-                    }
+                } catch (error) {
+                    console.error("Error al subir el archivo:", error);
+                    fileUploadStatus.textContent = `Error al subir archivo: ${error.message}`;
+                    fileUploadStatus.classList.add('error');
+                    // Si la subida falla, la nota se guardará sin el adjunto
+                    attachmentURL = null;
+                    attachmentPath = null;
+                    attachmentName = null;
                 }
-            } catch (error) {
-                console.error("Error al subir el archivo:", error);
-                fileUploadStatus.textContent = `Error al subir archivo: ${error.message}`;
-                fileUploadStatus.classList.add('error');
-                // No retornar, permitir guardar la nota sin adjunto si la subida falla
             }
+
 
             if (noteId) {
                 const noteRef = doc(getNotesCollectionRef(), noteId);
@@ -1593,7 +1611,9 @@
                     attachmentName: attachmentName
                 });
             } else {
-                await addDoc(getNotesCollectionRef(), {
+                // Para nuevas notas, si se subió un archivo, necesitamos el ID del documento de Firestore
+                // para actualizar la ruta del archivo en Storage si se usó 'temp_note_id'
+                const newNoteRef = await addDoc(getNotesCollectionRef(), {
                     title: noteTitle,
                     content: noteContent,
                     createdAt: new Date().toISOString(),
@@ -1601,6 +1621,26 @@
                     attachmentPath: attachmentPath,
                     attachmentName: attachmentName
                 });
+
+                // Si se subió un archivo con un ID temporal, actualizamos su ruta en Storage
+                if (file && attachmentPath && attachmentPath.includes('temp_note_id')) {
+                    const oldStorageRef = ref(storage, attachmentPath);
+                    const newStoragePath = `artifacts/${appId}/users/${currentUserId}/notes/${newNoteRef.id}/${attachmentName}`;
+                    const newStorageRef = ref(storage, newStoragePath);
+                    
+                    // Mover el archivo en Storage (no hay una operación directa de "mover", se copia y se borra el original)
+                    const newUploadTask = await uploadBytes(newStorageRef, file); // Volver a subir el mismo archivo
+                    const newAttachmentURL = await getDownloadURL(newUploadTask.ref);
+                    
+                    // Eliminar el archivo original con la ruta temporal
+                    await deleteObject(oldStorageRef).catch(e => console.warn("No se pudo eliminar el archivo temporal antiguo:", e));
+
+                    // Actualizar la nota en Firestore con la nueva URL y ruta
+                    await updateDoc(newNoteRef, {
+                        attachmentURL: newAttachmentURL,
+                        attachmentPath: newStorageRef.fullPath
+                    });
+                }
             }
             noteModal.style.display = 'none';
             fetchAndRenderNotes();
