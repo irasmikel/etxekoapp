@@ -3,1705 +3,1488 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>App de Control de Tareas del Hogar</title>
-    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <title>Mi Control del Hogar</title>
+    <!-- Incluye Tailwind CSS para un estilo rápido y responsivo -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        /* Reset de estilos */
-        * {
-            margin: 0;
-            padding: 0;
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f2f5;
+            color: #333;
+        }
+        .task-card, .note-card { /* Añadido .note-card */
+            background-color: white;
+            border-radius: 1.5rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+            cursor: pointer;
+            border-left: 8px solid;
+        }
+        .task-card:hover, .note-card:hover { /* Añadido .note-card */
+            transform: translateY(-5px);
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+        }
+        /* Colores de borde para categorías de tareas */
+        .category-baño { border-left-color: #4dc0b5; } /* Teal */
+        .category-suelo { border-left-color: #9f7aea; } /* Purple */
+        .category-cocina { border-left-color: #f6ad55; } /* Orange */
+        .category-dormitorio { border-left-color: #3b82f6; } /* Blue */
+        .category-general { border-left-color: #ef4444; } /* Red */
+        .category-pasillo { border-left-color: #6b7280; } /* Gray */
+        .category-balcón { border-left-color: #10b981; } /* Green */
+        .category-otro { border-left-color: #a855f7; } /* Violet */
+
+        /* Colores de borde para tipos de notas */
+        .note-type-text { border-left-color: #2563eb; } /* Blue */
+        .note-type-recipe { border-left-color: #9333ea; } /* Purple */
+        .note-type-file { border-left-color: #d97706; } /* Amber */
+
+
+        .completed-task {
+            text-decoration: line-through;
+            opacity: 0.6;
+            background-color: #e2e8f0;
+        }
+        .add-task-btn, .add-note-btn { /* Añadido .add-note-btn */
+            background: linear-gradient(to right, #6366f1, #8b5cf6);
+            box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3);
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .add-task-btn:hover, .add-note-btn:hover { /* Añadido .add-note-btn */
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(99, 102, 241, 0.4);
+        }
+        .nav-icon {
+            color: #6b7280;
+            transition: color 0.2s;
+        }
+        .nav-icon.active {
+            color: #4f46e5;
+        }
+        .modal {
+            background-color: rgba(0, 0, 0, 0.6);
+            z-index: 1000; /* Asegurar que el modal esté por encima de todo */
+        }
+        .modal-content {
+            background-color: white;
+            border-radius: 1.5rem;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+        }
+        input, select, textarea {
+            border: 1px solid #d1d5db;
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+            font-size: 1rem;
+            width: 100%;
             box-sizing: border-box;
         }
-
-        /* Estilos generales del cuerpo */
-        body {
-            font-family: 'Roboto', sans-serif;
-            background-color: #f5f7fa;
-            color: #333;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh; /* Asegura que el body ocupe al menos el 100% de la altura de la ventana */
-            margin: 0; /* Elimina márgenes por defecto */
-            padding: 0; /* Elimina paddings por defecto */
+        button {
+            border-radius: 0.75rem;
+            padding: 0.75rem 1.5rem;
+            font-weight: 600;
         }
-
-        /* Contenedor del "teléfono" para simular una app móvil */
-        .phone-container {
-            width: 90%; /* Ocupa el 90% del ancho del body */
-            max-width: 375px; /* Máximo 375px de ancho (tamaño de un móvil estándar) */
-            height: 90vh; /* Ocupa el 90% de la altura de la ventana */
-            max-height: 812px; /* Máximo 812px de alto (tamaño de un móvil estándar) */
-            aspect-ratio: 375 / 812; /* Mantiene la proporción de un teléfono móvil (ancho / alto) */
-            background-color: #fff;
-            border-radius: 30px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-            overflow: hidden; /* Asegura que el contenido interno no se desborde */
-            position: relative;
-            display: flex; /* Usar flexbox para el layout interno */
-            flex-direction: column;
-        }
-
-        /* Encabezado de la aplicación */
-        .app-header {
-            background-color: #4a6fa5;
-            color: white;
-            padding: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-shrink: 0; /* Evita que el header se encoja */
-        }
-
-        /* Título de la aplicación en el encabezado */
-        .app-title {
-            font-size: 24px;
-            font-weight: 500;
-        }
-
-        /* Muestra de la fecha en el encabezado */
-        .date-display {
-            font-size: 16px;
-            font-weight: 300;
-        }
-
-        /* Contenido principal de la aplicación, con scroll */
-        .main-content {
-            flex-grow: 1; /* Ocupa todo el espacio disponible */
-            overflow-y: auto; /* Permite scroll vertical */
-            padding-bottom: 20px; /* Espacio al final del scroll */
-        }
-
-        /* Sección de tareas */
-        .task-section, .notes-section {
-            padding: 15px;
-            margin-bottom: 10px;
-        }
-
-        /* Título de cada sección de tareas/notas */
-        .section-title {
-            font-size: 18px;
-            font-weight: 500;
-            margin-bottom: 10px;
-            color: #4a6fa5;
-            display: flex;
-            align-items: center;
-        }
-
-        /* Icono dentro del título de la sección */
-        .section-title .material-icons {
-            margin-right: 8px;
-            font-size: 20px;
-        }
-
-        /* Lista de tareas */
-        .task-list, .note-list {
-            list-style: none;
-        }
-
-        /* Elemento individual de la tarea */
-        .task-item, .note-item {
-            background-color: white;
-            border-radius: 10px;
-            padding: 15px;
-            margin-bottom: 10px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            transition: transform 0.2s;
-        }
-
-        /* Efecto hover para las tareas/notas */
-        .task-item:hover, .note-item:hover {
-            transform: scale(1.01);
-        }
-        
-        /* Borde izquierdo para tareas pendientes */
-        .task-item.pending {
-            border-left: 4px solid #ff9e6d;
-        }
-        
-        /* Borde izquierdo y opacidad para tareas completadas */
-        .task-item.completed {
-            border-left: 4px solid #4caf50;
-            opacity: 0.7;
-        }
-        
-        /* Borde izquierdo para tareas próximas */
-        .task-item.upcoming {
-            border-left: 4px solid #64b5f6;
-        }
-        
-        /* Información de la tarea (nombre y tiempo) */
-        .task-info, .note-info {
-            flex: 1;
-            cursor: pointer; /* Permite que la info de la tarea sea clickeable para toggle */
-        }
-        
-        /* Nombre de la tarea/título de la nota */
-        .task-name, .note-title {
-            font-size: 16px;
-            font-weight: 500;
-            margin-bottom: 5px;
-        }
-        
-        /* Tiempo o frecuencia de la tarea/contenido de la nota */
-        .task-time, .note-content-preview {
-            font-size: 14px;
-            color: #757575;
-            white-space: nowrap; /* Evita que el texto se divida en varias líneas */
-            overflow: hidden;     /* Oculta el contenido que excede el ancho */
-            text-overflow: ellipsis; /* Añade puntos suspensivos (...) si el texto es demasiado largo */
-        }
-        
-        /* Contenedor de iconos de estado y acciones */
-        .task-actions, .note-actions {
-            display: flex;
-            align-items: center;
-            gap: 5px; /* Espacio entre los iconos */
-            flex-shrink: 0; /* Evita que los botones se encojan */
-        }
-        
-        /* Estilo general para los iconos de estado */
-        .task-status .material-icons,
-        .task-actions .material-icons,
-        .note-actions .material-icons {
-            font-size: 20px;
-            margin: 0; /* Asegura que no haya márgenes no deseados */
-        }
-        
-        /* Color del icono para tareas pendientes */
-        .task-status .pending-icon {
-            color: #ff9e6d;
-        }
-        
-        /* Color del icono para tareas completadas */
-        .task-status .completed-icon {
-            color: #4caf50;
-        }
-        
-        /* Color del icono para tareas próximas */
-        .task-status .upcoming-icon {
-            color: #64b5f6;
-        }
-        
-        /* Botón de acción flotante (FAB) */
-        .fab-button {
-            position: absolute;
-            bottom: 90px; /* Ajustado para no solaparse con el nav-bar */
-            right: 20px;
-            width: 60px;
-            height: 60px;
-            border-radius: 50%;
-            background-color: #4a6fa5;
-            color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-            cursor: pointer;
-            transition: transform 0.2s;
-            z-index: 5; /* Asegura que esté por encima de otros elementos */
-        }
-        
-        /* Efecto hover para el FAB */
-        .fab-button:hover {
-            transform: scale(1.05);
-        }
-        
-        /* Icono dentro del FAB */
-        .fab-button .material-icons {
-            font-size: 30px;
-        }
-        
-        /* Barra de navegación inferior */
-        .bottom-nav {
-            position: relative; /* Cambiado a relative para que el FAB no lo pise */
-            height: 70px;
-            background-color: white;
-            display: flex;
-            justify-content: space-around;
-            align-items: center;
-            box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
-            z-index: 5; /* Asegura que esté por encima de otros elementos */
-            flex-shrink: 0; /* Evita que el nav se encoja */
-        }
-        
-        /* Elemento de navegación individual */
-        .nav-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            color: #757575;
-            cursor: pointer;
-            flex: 1; /* Permite que los items ocupen el mismo espacio */
-            padding: 10px 0; /* Espacio vertical para hacerlos más clickeables */
-        }
-        
-        /* Estilo para el elemento de navegación activo */
-        .nav-item.active {
-            color: #4a6fa5;
-        }
-        
-        /* Icono del elemento de navegación */
-        .nav-item .material-icons {
-            font-size: 24px;
-            margin-bottom: 5px;
-        }
-        
-        /* Texto del elemento de navegación */
-        .nav-item span {
-            font-size: 12px;
-        }
-
-        /* Modal (general) */
-        .modal {
-            display: none; /* Oculto por defecto */
-            position: absolute; /* Cambiado a absolute para que sea relativo al phone-container */
-            z-index: 10; /* Por encima de todo */
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            overflow: auto;
-            background-color: rgba(0,0,0,0.4); /* Fondo semi-transparente */
-            justify-content: center;
-            align-items: center;
-        }
-
-        /* Contenido del modal */
-        .modal-content {
-            background-color: #fefefe;
-            padding: 20px;
-            border-radius: 10px;
-            width: 80%;
-            max-width: 400px; /* Ancho máximo para el modal */
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-            position: relative;
-        }
-
-        /* Botón de cerrar del modal */
-        .close-button {
-            color: #aaa;
-            position: absolute;
-            top: 10px;
-            right: 15px;
-            font-size: 28px;
-            font-weight: bold;
+        /* Estilos para el campo de entrada de archivo */
+        input[type="file"] {
+            border: 1px solid #d1d5db;
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+            background-color: #f9fafb;
             cursor: pointer;
         }
-
-        /* Efecto hover para el botón de cerrar */
-        .close-button:hover,
-        .close-button:focus {
-            color: #333;
-            text-decoration: none;
-        }
-
-        /* Título dentro del modal */
-        .modal-content h2 {
-            margin-bottom: 20px;
-            color: #4a6fa5;
-        }
-
-        /* Estilos para inputs y selects del modal */
-        .modal-content input,
-        .modal-content select,
-        .modal-content textarea { /* Añadido textarea */
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            font-family: 'Roboto', sans-serif; /* Asegura la misma fuente */
-        }
-        .modal-content textarea {
-            min-height: 80px;
-            resize: vertical; /* Permite redimensionar verticalmente */
-        }
-        /* Estilos específicos para el input de tipo file */
-        .modal-content input[type="file"] {
-            border: 1px dashed #ccc; /* Borde punteado para indicar zona de archivo */
-            padding: 15px;
-            cursor: pointer;
-            margin-bottom: 15px;
-            font-size: 14px;
-            color: #555;
-            background-color: #f9f9f9;
-        }
-        .modal-content input[type="file"]::-webkit-file-upload-button {
-            visibility: hidden;
-            width: 0;
-            padding: 0;
-            margin: 0;
-        }
-        .modal-content input[type="file"]::before {
-            content: 'Seleccionar archivo';
-            display: inline-block;
-            background: #4a6fa5;
+        input[type="file"]::file-selector-button {
+            background-color: #6366f1;
             color: white;
             border: none;
-            border-radius: 3px;
-            padding: 8px 12px;
-            outline: none;
-            white-space: nowrap;
-            -webkit-user-select: none;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
             cursor: pointer;
-            font-size: 1em;
-            margin-right: 10px;
+            margin-right: 1rem;
+            transition: background-color 0.2s ease-in-out;
         }
-        .modal-content input[type="file"]:hover::before {
-            background: #3b5b82;
+        input[type="file"]::file-selector-button:hover {
+            background-color: #4f46e5;
         }
-        .file-upload-status {
-            margin-top: -8px;
-            margin-bottom: 10px;
-            font-size: 13px;
-            color: #666;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .file-upload-status.error {
-            color: #e57373;
-        }
-        .file-upload-status.success {
-            color: #4caf50;
-        }
-        .existing-attachment-container {
-            margin-bottom: 15px;
-            padding: 10px;
-            border: 1px solid #eee;
-            background-color: #f0f0f0;
-            border-radius: 5px;
-            font-size: 14px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .existing-attachment-container a {
-            color: #4a6fa5;
-            text-decoration: none;
-            font-weight: 500;
-        }
-        .existing-attachment-container a:hover {
-            text-decoration: underline;
-        }
-        .existing-attachment-container .delete-attachment-button {
-            background: none;
-            border: none;
-            color: #e57373;
-            cursor: pointer;
-            padding: 3px;
-            border-radius: 50%;
-        }
-        .existing-attachment-container .delete-attachment-button:hover {
-            background-color: rgba(229, 115, 115, 0.2);
-        }
-
-
-
-        /* Estilos para el botón de guardar del modal */
-        .modal-content button {
-            width: 100%;
-            padding: 10px;
-            background-color: #4a6fa5;
+        #appMessage {
+            position: fixed;
+            top: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.75rem;
             color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 16px;
+            font-weight: 600;
+            z-index: 1001;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        #appMessage.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        #appMessage.error {
+            background-color: #ef4444; /* Red-500 */
+        }
+        #appMessage.success {
+            background-color: #22c55e; /* Green-500 */
         }
 
-        /* Estilos para los botones de acción dentro de las tareas/notas */
-        .task-action-button, .note-action-button {
-            background: none;
-            border: none;
-            color: #757575; /* Color por defecto para los iconos de acción */
-            cursor: pointer;
-            padding: 5px;
-            border-radius: 50%;
-            transition: background-color 0.3s, color 0.3s;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
+        /* Calendar specific styles */
+        #calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 2px;
+            background-color: #e2e8f0; /* Light gray for grid lines */
+            border-radius: 0.75rem;
+            overflow: hidden;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
         }
-
-        .task-action-button:hover, .note-action-button:hover {
-            background-color: #e0e0e0;
-            color: #4a6fa5; /* Color al pasar el ratón */
-        }
-
-        .task-action-button.delete-button:hover, .note-action-button.delete-button:hover {
-            color: #e57373; /* Rojo para el botón de eliminar */
-        }
-
-        .task-action-button.postpone-button:hover {
-            color: #ff9e6d; /* Naranja para el botón de posponer */
-        }
-
-        .task-action-button.edit-button:hover, .note-action-button.edit-button:hover {
-            color: #64b5f6; /* Azul para el botón de editar */
-        }
-
-
-        .task-action-button .material-icons, .note-action-button .material-icons {
-            font-size: 20px;
-            margin: 0;
-        }
-
-        /* Animación para el icono de carga */
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .spin {
-            animation: spin 1s linear infinite;
-        }
-
-        /* Estilo para el contenido del consejo en el modal */
-        #tip-content {
-            font-size: 16px;
-            line-height: 1.5;
-            color: #555;
-            text-align: justify;
-            min-height: 50px; /* Asegura que el contenido tenga un espacio mínimo */
-        }
-
-        /* Estilos para el dashboard */
-        .dashboard-cards {
-            display: flex;
-            justify-content: space-around;
-            padding: 15px;
-            gap: 15px; /* Espacio entre las tarjetas */
-        }
-
-        .dashboard-card {
-            background-color: white;
-            border-radius: 15px;
-            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-            padding: 20px;
-            flex: 1; /* Ocupa el mismo espacio */
+        .calendar-header-day {
+            background-color: #cbd5e0; /* Gray-300 */
+            font-weight: 600;
+            padding: 0.5rem;
             text-align: center;
+            font-size: 0.875rem; /* sm text */
+        }
+        .calendar-day-cell {
+            background-color: white;
+            padding: 0.75rem;
+            min-height: 80px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            justify-content: flex-start;
+            font-size: 0.875rem;
             cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
-            min-width: 140px; /* Ancho mínimo para las tarjetas */
+            transition: background-color 0.2s ease-in-out;
+            position: relative;
+        }
+        .calendar-day-cell:hover {
+            background-color: #f0f4f8; /* Lighter on hover */
+        }
+        .calendar-day-cell.inactive {
+            background-color: #f8fafc; /* Lighter background for inactive days */
+            color: #cbd5e0; /* Lighter text for inactive days */
+            cursor: default;
+        }
+        .calendar-day-cell.today {
+            border: 2px solid #4f46e5; /* Indigo-600 */
+            box-shadow: 0 0 0 1px #4f46e5;
+        }
+        .calendar-day-cell .day-number {
+            font-weight: 700;
+            font-size: 1rem;
+            margin-bottom: 0.25rem;
+        }
+        .calendar-day-cell .task-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #f6ad55; /* Orange-400 for tasks */
+            margin-top: 0.25rem;
+            position: absolute; /* Position indicator */
+            top: 0.5rem;
+            right: 0.5rem;
+        }
+        .calendar-day-cell .task-count {
+            font-size: 0.75rem;
+            background-color: #10b981; /* Green-500 */
+            color: white;
+            border-radius: 9999px; /* Full rounded */
+            padding: 0.1rem 0.4rem;
+            position: absolute;
+            bottom: 0.5rem;
+            right: 0.5rem;
+            font-weight: 600;
+        }
+        /* Modal for day tasks */
+        #dayTasksModalContent ul {
+            list-style: none;
+            padding: 0;
+        }
+        #dayTasksModalContent ul li {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #eee;
+            font-size: 0.95rem;
+        }
+        #dayTasksModalContent ul li:last-child {
+            border-bottom: none;
+        }
+        #dayTasksModalContent ul li .task-due {
+            font-size: 0.8rem;
+            color: #6b7280;
         }
 
-        .dashboard-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+        /* Progress Bar */
+        .progress-bar-container {
+            width: 100%;
+            background-color: #e5e7eb; /* Gray-200 */
+            border-radius: 9999px; /* Full rounded */
+            height: 1.5rem;
+            overflow: hidden;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
         }
-
-        .dashboard-card .card-title {
-            font-size: 18px;
-            font-weight: 500;
-            color: #4a6fa5;
-            margin-bottom: 10px;
+        .progress-bar-fill {
+            height: 100%;
+            background-color: #22c55e; /* Green-500 */
+            border-radius: 9999px;
+            transition: width 0.5s ease-in-out;
             display: flex;
             align-items: center;
             justify-content: center;
-        }
-
-        .dashboard-card .card-title .material-icons {
-            margin-right: 8px;
-            font-size: 22px;
-        }
-
-        .dashboard-card .card-count {
-            font-size: 36px;
-            font-weight: 700;
-            color: #333;
-        }
-
-        /* Estilos para el modal de confirmación de eliminación */
-        .confirm-modal-buttons {
-            display: flex;
-            justify-content: space-around;
-            gap: 10px;
-            margin-top: 20px;
-        }
-
-        .confirm-modal-buttons button {
-            flex: 1;
-            padding: 10px;
-            border-radius: 5px;
-            font-size: 16px;
-            cursor: pointer;
-        }
-
-        .confirm-modal-buttons .confirm-delete-button {
-            background-color: #e57373; /* Rojo para confirmar */
             color: white;
-            border: none;
+            font-weight: 600;
+            font-size: 0.875rem;
         }
-
-        .confirm-modal-buttons .cancel-delete-button {
-            background-color: #f0f0f0; /* Gris claro para cancelar */
-            color: #333;
-            border: 1px solid #ddd;
-        }
-
-        .confirm-modal-buttons button:hover {
-            opacity: 0.9;
-        }
-
-        /* Estilos para el campo de búsqueda de notas */
-        .notes-search-container {
-            padding: 15px;
-            background-color: #f0f2f5;
-            border-bottom: 1px solid #e0e0e0;
-            display: flex;
-            gap: 10px;
-            align-items: center;
-        }
-        .notes-search-container input {
-            flex-grow: 1;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 20px; /* Bordes redondeados para el campo de búsqueda */
-            font-size: 16px;
-            background-color: white;
-        }
-        .notes-search-container button {
-            background-color: #4a6fa5;
-            color: white;
-            border: none;
-            border-radius: 20px;
-            padding: 10px 15px;
-            cursor: pointer;
-            font-size: 16px;
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .notes-search-container button .material-icons {
-            font-size: 20px;
-        }
-
     </style>
 </head>
-<body>
-    <div class="phone-container">
-        <div class="app-header">
-            <div class="app-title">Mi Hogar Ordenado</div>
-            <div class="date-display" id="date-display"></div>
-        </div>
-        
-        <div class="main-content" id="main-content-area">
-            <!-- Vistas de la aplicación -->
-            <div id="dashboard-view" style="display: block;">
-                <div class="dashboard-cards">
-                    <div class="dashboard-card" id="today-tasks-card">
-                        <div class="card-title"><i class="material-icons">today</i> Tareas de Hoy</div>
-                        <div class="card-count" id="today-task-count">0</div>
-                    </div>
-                    <div class="dashboard-card" id="pending-tasks-card">
-                        <div class="card-title"><i class="material-icons">schedule</i> Pendientes</div>
-                        <div class="card-count" id="pending-task-count">0</div>
-                    </div>
-                </div>
-                <div id="current-tasks-list">
-                    <!-- Las secciones de tareas se renderizarán aquí dinámicamente mediante JavaScript -->
-                </div>
-            </div>
+<body class="min-h-screen flex flex-col">
 
-            <div id="history-view" style="display: none;">
-                <div class="task-section">
-                    <div class="section-title">
-                        <i class="material-icons">history</i> Historial de Tareas
-                    </div>
-                    <ul class="task-list" id="history-task-list">
-                        <!-- Las tareas completadas se renderizarán aquí -->
-                    </ul>
-                </div>
-            </div>
-
-            <!-- Nueva sección de Notas -->
-            <div id="notes-view" style="display: none;">
-                <div class="notes-search-container">
-                    <input type="text" id="note-search-input" placeholder="Buscar notas...">
-                    <button id="add-note-button">
-                        <i class="material-icons">add</i> Nueva Nota
-                    </button>
-                </div>
-                <div class="notes-section">
-                    <div class="section-title">
-                        <i class="material-icons">article</i> Mis Notas
-                    </div>
-                    <ul class="note-list" id="notes-list">
-                        <!-- Las notas se renderizarán aquí dinámicamente -->
-                    </ul>
-                </div>
-            </div>
-
-        </div>
-
-        <!-- Botón flotante para añadir tareas -->
-        <div class="fab-button" id="fab-button">
-            <i class="material-icons">add</i>
-        </div>
-        
-        <!-- Barra de navegación inferior -->
-        <div class="bottom-nav">
-            <div class="nav-item active" id="nav-home">
-                <i class="material-icons">home</i>
-                <span>Inicio</span>
-            </div>
-            <div class="nav-item" id="nav-notes">
-                <i class="material-icons">article</i>
-                <span>Notas</span>
-            </div>
-            <div class="nav-item" id="nav-calendar">
-                <i class="material-icons">calendar_today</i>
+    <!-- Header (Pestañas de Navegación) -->
+    <header class="bg-white shadow-sm p-4 flex justify-around items-center sticky top-0 z-10">
+        <nav class="flex space-x-6">
+            <button class="nav-item flex flex-col items-center text-sm font-medium text-gray-700 hover:text-indigo-600 active-nav-tab" data-tab="today">
+                <i class="fas fa-home text-2xl nav-icon active"></i>
+                <span>Hoy</span>
+            </button>
+            <button class="nav-item flex flex-col items-center text-sm font-medium text-gray-700 hover:text-indigo-600" data-tab="pending">
+                <i class="fas fa-clipboard-list text-2xl nav-icon"></i>
+                <span>Pendientes</span>
+            </button>
+            <button class="nav-item flex flex-col items-center text-sm font-medium text-gray-700 hover:text-indigo-600" data-tab="calendar">
+                <i class="fas fa-calendar-alt text-2xl nav-icon"></i>
                 <span>Calendario</span>
-            </div>
-            <div class="nav-item" id="nav-history">
-                <i class="material-icons">history</i>
+            </button>
+            <button class="nav-item flex flex-col items-center text-sm font-medium text-gray-700 hover:text-indigo-600" data-tab="notes">
+                <i class="fas fa-book text-2xl nav-icon"></i>
+                <span>Notas</span>
+            </button>
+            <button class="nav-item flex flex-col items-center text-sm font-medium text-gray-700 hover:text-indigo-600" data-tab="progress">
+                <i class="fas fa-chart-line text-2xl nav-icon"></i>
+                <span>Progreso</span>
+            </button>
+            <button class="nav-item flex flex-col items-center text-sm font-medium text-gray-700 hover:text-indigo-600" data-tab="history">
+                <i class="fas fa-history text-2xl nav-icon"></i>
                 <span>Historial</span>
-            </div>
-        </div>
+            </button>
+        </nav>
+    </header>
 
-        <!-- Modal para añadir/editar tareas -->
-        <div id="taskModal" class="modal">
-            <div class="modal-content">
-                <span class="close-button" id="closeTaskModal">&times;</span>
-                <h2 id="taskModalTitle">Añadir Nueva Tarea</h2>
-                <input type="hidden" id="task-id-input"> <!-- Campo oculto para el ID de la tarea a editar -->
-                <input type="text" id="task-name-input" placeholder="Nombre de la tarea" required>
-                <select id="task-area-select">
-                    <option value="Cocina">Cocina</option>
-                    <option value="Baños">Baños</option>
-                    <option value="Dormitorios">Dormitorios</option>
-                    <option value="General">General</option>
-                </select>
-                <select id="task-frequency-select">
-                    <option value="Diario">Diario</option>
-                    <option value="Semanal">Semanal</option>
-                    <option value="Mensual">Mensual</option>
-                </select>
-                <!-- Campo para la fecha de vencimiento -->
-                <input type="date" id="task-due-date-input">
-                <button id="save-task-button">Guardar Tarea</button>
-            </div>
-        </div>
+    <!-- Global App Message Display -->
+    <div id="appMessage" class="hidden"></div>
 
-        <!-- Modal para mostrar consejos de limpieza -->
-        <div id="tipModal" class="modal">
-            <div class="modal-content">
-                <span class="close-button tip-close-button">&times;</span>
-                <h2>Consejo de Limpieza ✨</h2>
-                <p id="tip-content">Generando consejo...</p>
-                <div id="tip-loading" style="display: none; text-align: center; margin-top: 15px;">
-                    <i class="material-icons spin" style="font-size: 24px; color: #4a6fa5;">cached</i>
+
+    <!-- Main Content Area -->
+    <main class="flex-grow p-6">
+
+        <!-- Sección "Hoy" (Tareas de Limpieza) -->
+        <section id="today" class="tab-content active-tab">
+            <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Tareas de Limpieza</h1>
+            <div id="taskList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Las tareas se cargarán aquí dinámicamente -->
+            </div>
+            <div class="fixed bottom-24 right-6 md:right-10 lg:right-16">
+                <button id="addTaskBtn" class="add-task-btn text-white font-semibold py-4 px-6 rounded-full shadow-lg flex items-center space-x-2">
+                    <i class="fas fa-plus text-xl"></i>
+                    <span>Añadir tarea</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Sección "Pendientes" (Tareas no completadas) -->
+        <section id="pending" class="tab-content hidden">
+            <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Tareas Pendientes</h1>
+            <div id="pendingTaskList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Las tareas pendientes se cargarán aquí dinámicamente -->
+            </div>
+        </section>
+
+        <!-- Sección "Calendario" -->
+        <section id="calendar" class="tab-content hidden">
+            <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Calendario de Tareas</h1>
+            <div class="bg-white rounded-2xl shadow-md p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <button id="prevMonthBtn" class="bg-indigo-500 hover:bg-indigo-600 text-white p-2 rounded-full"><i class="fas fa-chevron-left"></i></button>
+                    <h2 id="currentMonthYear" class="text-2xl font-semibold text-gray-800"></h2>
+                    <button id="nextMonthBtn" class="bg-indigo-500 hover:bg-indigo-600 text-white p-2 rounded-full"><i class="fas fa-chevron-right"></i></button>
+                </div>
+                <div id="calendar-grid">
+                    <!-- Calendar days will be rendered here -->
                 </div>
             </div>
-        </div>
+        </section>
 
-        <!-- Modal de Confirmación de Eliminación (General para Tareas y Notas) -->
-        <div id="confirmDeleteModal" class="modal">
-            <div class="modal-content">
-                <h2>Confirmar Eliminación</h2>
-                <p id="confirm-delete-message">¿Estás seguro de que quieres eliminar este elemento?</p>
-                <div class="confirm-modal-buttons">
-                    <button class="confirm-delete-button" id="confirm-delete-yes">Sí, Eliminar</button>
-                    <button class="cancel-delete-button" id="confirm-delete-no">No, Cancelar</button>
-                </div>
+        <!-- Sección "Notas" (Repositorio de Notas unificadas) -->
+        <section id="notes" class="tab-content hidden">
+            <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Mis Notas</h1>
+            <div class="mb-6">
+                <input type="text" id="noteSearch" placeholder="Buscar notas por título o contenido..." class="w-full p-3 rounded-lg border border-gray-300 focus:ring-blue-500 focus:border-blue-500">
             </div>
-        </div>
-
-        <!-- Nuevo Modal para añadir/editar notas -->
-        <div id="noteModal" class="modal">
-            <div class="modal-content">
-                <span class="close-button" id="closeNoteModal">&times;</span>
-                <h2 id="noteModalTitle">Nueva Nota</h2>
-                <input type="hidden" id="note-id-input">
-                <input type="text" id="note-title-input" placeholder="Título de la nota" required>
-                <textarea id="note-content-input" placeholder="Contenido de la nota (puedes pegar enlaces o texto largo aquí)"></textarea>
-                <!-- Campo para adjuntar archivo -->
-                <input type="file" id="note-attachment-input" accept="image/*, application/pdf, .txt, .doc, .docx, .xls, .xlsx">
-                <div id="file-upload-status" class="file-upload-status" style="display:none;"></div>
-                <div id="existing-attachment-display" class="existing-attachment-container" style="display:none;">
-                    <a id="existing-attachment-link" href="#" target="_blank"></a>
-                    <button class="delete-attachment-button" title="Eliminar archivo adjunto"><i class="material-icons">close</i></button>
-                </div>
-                <button id="save-note-button">Guardar Nota</button>
+            <div id="noteList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Las notas se cargarán aquí dinámicamente -->
             </div>
-        </div>
+            <div class="fixed bottom-24 right-6 md:right-10 lg:right-16">
+                <button id="addNoteBtn" class="add-note-btn text-white font-semibold py-4 px-6 rounded-full shadow-lg flex items-center space-x-2">
+                    <i class="fas fa-plus text-xl"></i>
+                    <span>Añadir nota</span>
+                </button>
+            </div>
+        </section>
 
-    </div>
-    
-    <!-- Incluye el SDK de Firebase -->
-    <script type="module">
-        // Importa las funciones necesarias de Firebase
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
-        import { getFirestore, collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where, getDoc } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
-        // Importa las funciones de Firebase Storage
-        import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-storage.js";
-
-
-        // Firebase Config (obtenida del entorno de Canvas o hardcodeada para producción)
-        const firebaseConfig = typeof __firebase_config !== 'undefined' && __firebase_config ? 
-            JSON.parse(__firebase_config) : 
-            {
-                apiKey: "AIzaSyApVxmFp3bcogwMqaz0MQiIng6XzGwhTvY",
-                authDomain: "etxekoapp.firebaseapp.com",
-                projectId: "etxekoapp",
-                storageBucket: "etxekoapp.firebasestorage.app",
-                messagingSenderId: "1031385135784",
-                appId: "1:1031385135784:web:1018c0dadb87769495209d"
-            };
-
-        // App ID (obtenido del entorno de Canvas o hardcodeado para producción)
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-        // Inicializa Firebase
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
-        const storage = getStorage(app); // Inicializa Firebase Storage
-
-        let currentUserId = null; // Para almacenar el ID del usuario autenticado
-
-        // Autenticación anónima o con token (proporcionado por Canvas)
-        onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                currentUserId = user.uid;
-                console.log("Usuario autenticado:", currentUserId);
-                // Una vez autenticado, cargar las tareas
-                fetchAndRenderTasks('all');
-                renderDashboardCounts();
-            } else {
-                console.log("Iniciando sesión anónimamente...");
-                try {
-                    if (typeof __initial_auth_token !== 'undefined') {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                } catch (error) {
-                    console.error("Error al iniciar sesión:", error);
-                }
-            }
-        });
-
-        // Obtener referencias a elementos del DOM
-        const mainContentArea = document.getElementById('main-content-area');
-        const dashboardView = document.getElementById('dashboard-view');
-        const historyView = document.getElementById('history-view');
-        const notesView = document.getElementById('notes-view'); // Nueva vista de notas
-        const currentTasksList = document.getElementById('current-tasks-list');
-        const historyTaskList = document.getElementById('history-task-list');
-        const notesList = document.getElementById('notes-list'); // Lista de notas
-
-        const fabButton = document.getElementById('fab-button');
-        const taskModal = document.getElementById('taskModal');
-        const closeTaskModalButton = document.getElementById('closeTaskModal');
-        const taskModalTitle = document.getElementById('taskModalTitle');
-        const taskIdInput = document.getElementById('task-id-input'); // Para editar
-        const taskNameInput = document.getElementById('task-name-input');
-        const taskAreaSelect = document.getElementById('task-area-select');
-        const taskFrequencySelect = document.getElementById('task-frequency-select');
-        const taskDueDateInput = document.getElementById('task-due-date-input'); // Nuevo campo de fecha
-        const saveTaskButton = document.getElementById('save-task-button');
-        
-        const dateDisplay = document.getElementById('date-display');
-
-        // Elementos del dashboard
-        const todayTasksCard = document.getElementById('today-tasks-card');
-        const pendingTasksCard = document.getElementById('pending-tasks-card');
-        const todayTaskCount = document.getElementById('today-task-count');
-        const pendingTaskCount = document.getElementById('pending-task-count');
-
-        // Elementos del modal de consejos
-        const tipModal = document.getElementById('tipModal');
-        const tipCloseButton = document.querySelector('.tip-close-button');
-        const tipContent = document.getElementById('tip-content');
-        const tipLoading = document.getElementById('tip-loading');
-
-        // Elementos del modal de confirmación de eliminación
-        const confirmDeleteModal = document.getElementById('confirmDeleteModal');
-        const confirmDeleteMessage = document.getElementById('confirm-delete-message');
-        const confirmDeleteYesButton = document.getElementById('confirm-delete-yes');
-        const confirmDeleteNoButton = document.getElementById('confirm-delete-no');
-        let itemToDeleteId = null; // Variable para almacenar el ID de la tarea/nota a eliminar
-        let itemToDeleteType = null; // Variable para almacenar el tipo ('task' o 'note')
-        let itemToDeleteAttachmentPath = null; // Para almacenar la ruta del archivo a eliminar en Storage
-
-        // Elementos del nuevo modal de notas
-        const noteModal = document.getElementById('noteModal');
-        const closeNoteModalButton = document.getElementById('closeNoteModal');
-        const noteModalTitle = document.getElementById('noteModalTitle');
-        const noteIdInput = document.getElementById('note-id-input');
-        const noteTitleInput = document.getElementById('note-title-input');
-        const noteContentInput = document.getElementById('note-content-input');
-        const noteAttachmentInput = document.getElementById('note-attachment-input'); // Input de archivo
-        const fileUploadStatus = document.getElementById('file-upload-status'); // Estado de la subida
-        const existingAttachmentDisplay = document.getElementById('existing-attachment-display'); // Contenedor para adjunto existente
-        const existingAttachmentLink = document.getElementById('existing-attachment-link'); // Enlace al adjunto existente
-        const deleteAttachmentButton = existingAttachmentDisplay.querySelector('.delete-attachment-button'); // Botón para eliminar adjunto existente
-        const saveNoteButton = document.getElementById('save-note-button');
-        const addNoteButton = document.getElementById('add-note-button'); // Botón para añadir nota en vista de notas
-        const noteSearchInput = document.getElementById('note-search-input'); // Campo de búsqueda de notas
-
-        // Navegación
-        const navHome = document.getElementById('nav-home');
-        const navNotes = document.getElementById('nav-notes'); // Renombrado de nav-zones
-        const navCalendar = document.getElementById('nav-calendar');
-        const navHistory = document.getElementById('nav-history');
-
-        let currentView = 'home'; // Controla la vista actual (home, notes, history, etc.)
-
-        // Configuración de la API de Gemini
-        const GEMINI_API_KEY = ""; // Esta clave será proporcionada por el entorno de Canvas/Vercel
-        const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
-
-        /**
-         * Retorna el icono de Material Design basado en el estado de la tarea.
-         * @param {string} status - El estado de la tarea ("pending", "completed", "upcoming").
-         * @returns {string} El nombre del icono de Material Design.
-         */
-        const getIconForStatus = (status) => {
-            switch (status) {
-                case 'pending': return 'schedule'; // Icono de reloj para pendiente
-                case 'completed': return 'check_circle'; // Icono de verificación para completado
-                case 'upcoming': return 'event'; // Icono de calendario para próximo
-                default: return ''; // Por si acaso
-            }
-        };
-
-        /**
-         * Retorna el icono de Material Design basado en el área de la tarea.
-         * @param {string} area - El área de la tarea ("Cocina", "Baños", "Dormitorios", etc.).
-         * @returns {string} El nombre del icono de Material Design.
-         */
-        const getIconForArea = (area) => {
-            switch (area) {
-                case 'Cocina': return 'kitchen';
-                case 'Baños': return 'bathtub';
-                case 'Dormitorios': return 'bed';
-                case 'General': return 'home'; // Un icono general para tareas que no encajan en una categoría específica
-                default: return '';
-            }
-        };
-
-        /**
-         * Función auxiliar para obtener la referencia a la colección de tareas del usuario.
-         * @returns {import("firebase/firestore").CollectionReference} La referencia a la colección de tareas.
-         */
-        const getTasksCollectionRef = () => {
-            if (!currentUserId) {
-                console.error("No hay usuario autenticado para acceder a las tareas.");
-                return collection(db, `artifacts/${appId}/users/anonymous/tasks`);
-            }
-            return collection(db, `artifacts/${appId}/users/${currentUserId}/tasks`);
-        };
-
-        /**
-         * Función auxiliar para obtener la referencia a la colección de notas del usuario.
-         * @returns {import("firebase/firestore").CollectionReference} La referencia a la colección de notas.
-         */
-        const getNotesCollectionRef = () => {
-            if (!currentUserId) {
-                console.error("No hay usuario autenticado para acceder a las notas.");
-                return collection(db, `artifacts/${appId}/users/anonymous/notes`);
-            }
-            return collection(db, `artifacts/${appId}/users/${currentUserId}/notes`);
-        };
-
-        /**
-         * Función auxiliar para realizar llamadas fetch con reintentos y retroceso exponencial.
-         * Útil para manejar problemas temporales de red o límites de tasa de API.
-         */
-        const retryFetch = async (url, options, retries = 3, delay = 1000) => {
-            for (let i = 0; i < retries; i++) {
-                try {
-                    const response = await fetch(url, options);
-                    if (!response.ok) {
-                        // Si es un error 429 (Too Many Requests) y quedan reintentos
-                        if (response.status === 429 && i < retries - 1) {
-                            await new Promise(res => setTimeout(res, delay * (2 ** i)));
-                            continue; // Reintentar
-                        }
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    return response;
-                } catch (error) {
-                    console.error(`Intento de fetch ${i + 1} falló:`, error);
-                    if (i < retries - 1) {
-                        await new Promise(res => setTimeout(res, delay * (2 ** i)));
-                    } else {
-                        throw error; // Lanzar el error si no quedan reintentos
-                    }
-                }
-            }
-        };
-
-        /**
-         * Genera un consejo de limpieza utilizando la API de Gemini.
-         * @param {string} taskName - El nombre de la tarea para la que se quiere el consejo.
-         * @returns {string} El consejo de limpieza generado por el LLM o un mensaje de error.
-         */
-        const generateCleaningTip = async (taskName) => {
-            const prompt = `Dame un consejo de limpieza rápido y eficaz para la tarea: "${taskName}". Sé conciso y directo, no incluyas el nombre de la tarea en la respuesta. Maximo 100 caracteres.`;
-            let chatHistory = [];
-            chatHistory.push({ role: "user", parts: [{ text: prompt }] });
-            const payload = { contents: chatHistory };
-
-            try {
-                const response = await retryFetch(GEMINI_API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const result = await response.json();
-                
-                if (result.candidates && result.candidates.length > 0 &&
-                    result.candidates[0].content && result.candidates[0].content.parts &&
-                    result.candidates[0].content.parts.length > 0) {
-                    return result.candidates[0].content.parts[0].text;
-                } else {
-                    console.error("Respuesta inesperada de la API de Gemini:", result);
-                    return "No se pudo generar el consejo en este momento. Inténtalo de nuevo más tarde.";
-                }
-            } catch (error) {
-                console.error("Error al llamar a la API de Gemini:", error);
-                return "Hubo un problema al conectar con el servicio de IA. Inténtalo de nuevo.";
-            }
-        };
-
-        /**
-         * Renderiza el recuento de tareas en las tarjetas del dashboard.
-         */
-        const renderDashboardCounts = async () => {
-            if (!currentUserId) return;
-
-            const tasksRef = getTasksCollectionRef();
-            const querySnapshot = await getDocs(tasksRef);
-            const tasks = [];
-            querySnapshot.forEach((doc) => {
-                tasks.push({ id: doc.id, ...doc.data() });
-            });
-
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-
-            let todayCount = 0;
-            let pendingCount = 0;
-
-            tasks.forEach(task => {
-                if (task.dueDate) {
-                    const dueDate = new Date(task.dueDate);
-                    dueDate.setHours(0, 0, 0, 0);
-                    if (dueDate.getTime() === today.getTime() && task.status !== 'completed') {
-                        todayCount++;
-                    }
-                }
-                if (task.status === 'pending') {
-                    pendingCount++;
-                }
-            });
-
-            todayTaskCount.textContent = todayCount;
-            pendingTaskCount.textContent = pendingCount;
-        };
-
-        /**
-         * Función asincrónica para obtener las tareas de Firestore y renderizarlas en la interfaz.
-         * @param {string} filterType - Tipo de filtro: 'all', 'today', 'pending', 'completed'.
-         */
-        const fetchAndRenderTasks = async (filterType = 'all') => {
-            if (!currentUserId) return;
-
-            currentTasksList.innerHTML = ''; // Limpiar el contenedor de tareas existentes
-            historyTaskList.innerHTML = ''; // Limpiar el contenedor de historial
-            
-            const tasksRef = getTasksCollectionRef();
-            let tasksQuery;
-
-            if (filterType === 'completed') {
-                tasksQuery = query(tasksRef, where("status", "==", "completed"));
-            } else if (filterType === 'pending') {
-                 tasksQuery = query(tasksRef, where("status", "==", "pending"));
-            } else if (filterType === 'today') {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                const tomorrow = new Date(today);
-                tomorrow.setDate(today.getDate() + 1);
-
-                tasksQuery = query(
-                    tasksRef,
-                    where("dueDate", ">=", today.toISOString().split('T')[0]),
-                    where("dueDate", "<", tomorrow.toISOString().split('T')[0])
-                );
-            } else {
-                tasksQuery = tasksRef;
-            }
-
-            const querySnapshot = await getDocs(tasksQuery);
-            let tasks = [];
-            querySnapshot.forEach((doc) => {
-                tasks.push({ id: doc.id, ...doc.data() });
-            });
-
-            if (filterType === 'today') {
-                tasks = tasks.filter(task => task.status !== 'completed');
-            }
-
-            tasks.sort((a, b) => {
-                if (a.status === 'completed' && b.status !== 'completed') return 1;
-                if (a.status !== 'completed' && b.status === 'completed') return -1;
-                return 0;
-            });
-
-            const groupedTasks = tasks.reduce((acc, task) => {
-                const area = task.area;
-                if (!acc[area]) {
-                    acc[area] = [];
-                }
-                acc[area].push(task);
-                return acc;
-            }, {});
-
-            if (filterType === 'completed') {
-                tasks.forEach(task => {
-                    const taskItem = createTaskItemHTML(task);
-                    historyTaskList.appendChild(taskItem);
-                });
-            } else {
-                for (const area in groupedTasks) {
-                    const section = document.createElement('div');
-                    section.className = 'task-section';
-                    section.innerHTML = `
-                        <div class="section-title">
-                            <i class="material-icons">${getIconForArea(area)}</i>
-                            ${area}
-                        </div>
-                        <ul class="task-list" id="task-list-${area.replace(/\s+/g, '-') /* Sanitiza el ID */}"></ul>
-                    `;
-                    currentTasksList.appendChild(section);
-
-                    const taskList = document.getElementById(`task-list-${area.replace(/\s+/g, '-')}`);
-                    groupedTasks[area].forEach(task => {
-                        const taskItem = createTaskItemHTML(task);
-                        taskList.appendChild(taskItem);
-                    });
-                }
-            }
-
-            attachTaskItemListeners();
-        };
-
-        /**
-         * Crea el HTML para un elemento de tarea.
-         * @param {Object} task - Objeto de la tarea con sus propiedades.
-         * @returns {HTMLElement} El elemento LI HTML de la tarea.
-         */
-        const createTaskItemHTML = (task) => {
-            const taskItem = document.createElement('li');
-            taskItem.className = `task-item ${task.status}`;
-            taskItem.dataset.id = task.id;
-            taskItem.innerHTML = `
-                <div class="task-info">
-                    <div class="task-name">${task.name}</div>
-                    <div class="task-time">${task.frequency} ${task.dueDate ? `(Vence: ${new Date(task.dueDate).toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })})` : ''}</div>
+        <!-- Sección "Progreso" -->
+        <section id="progress" class="tab-content hidden">
+            <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Mi Progreso</h1>
+            <div class="bg-white rounded-2xl shadow-md p-6 text-center space-y-6">
+                <h2 class="text-2xl font-semibold text-gray-700">Resumen de Tareas Completadas</h2>
+                <div>
+                    <p class="text-lg text-gray-600">Total de tareas creadas: <span id="totalTasksCreated" class="font-bold text-indigo-600">0</span></p>
+                    <p class="text-lg text-gray-600">Tareas completadas: <span id="totalTasksCompleted" class="font-bold text-green-600">0</span></p>
                 </div>
-                <div class="task-actions">
-                    <button class="task-action-button tip-button" data-task-name="${task.name}" title="Obtener consejo de limpieza">
-                        <i class="material-icons">lightbulb_outline</i>
-                    </button>
-                    ${task.status !== 'completed' ? `
-                        <button class="task-action-button postpone-button" data-id="${task.id}" title="Posponer tarea">
-                            <i class="material-icons">event_note</i>
-                        </button>
-                        <button class="task-action-button edit-button" data-id="${task.id}" title="Editar tarea">
-                            <i class="material-icons">edit</i>
-                        </button>
-                    ` : ''}
-                    <button class="task-action-button delete-button" data-id="${task.id}" data-type="task" title="Eliminar tarea">
-                        <i class="material-icons">delete</i>
-                    </button>
-                </div>
-            `;
 
-            taskItem.querySelector('.task-info').addEventListener('click', async () => {
-                const taskId = taskItem.dataset.id;
-                const currentStatus = taskItem.classList.contains('pending') ? 'pending' : 'completed';
-                const newStatus = currentStatus === 'pending' ? 'completed' : 'pending';
-                const taskRef = doc(getTasksCollectionRef(), taskId);
-                await updateDoc(taskRef, {
-                    status: newStatus
-                });
-                fetchAndRenderTasks(currentView === 'home' ? 'all' : currentView);
-                renderDashboardCounts();
-            });
-
-            return taskItem;
-        };
-
-        /**
-         * Adjunta los listeners de eventos a los botones de acción de las tareas.
-         */
-        const attachTaskItemListeners = () => {
-            document.querySelectorAll('.tip-button').forEach(button => {
-                button.onclick = async (e) => {
-                    e.stopPropagation();
-                    const taskName = e.currentTarget.dataset.taskName;
-                    
-                    tipContent.textContent = "Generando consejo...";
-                    tipLoading.style.display = 'block';
-                    tipModal.style.display = 'flex';
-
-                    try {
-                        const tip = await generateCleaningTip(taskName);
-                        tipContent.textContent = tip;
-                    } finally {
-                        tipLoading.style.display = 'none';
-                    }
-                };
-            });
-
-            document.querySelectorAll('.postpone-button').forEach(button => {
-                button.onclick = async (e) => {
-                    e.stopPropagation();
-                    const taskId = e.currentTarget.dataset.id;
-                    await postponeTask(taskId);
-                };
-            });
-
-            document.querySelectorAll('.edit-button').forEach(button => {
-                button.onclick = async (e) => {
-                    e.stopPropagation();
-                    const taskId = e.currentTarget.dataset.id;
-                    await showTaskModalForEdit(taskId);
-                };
-            });
-
-            document.querySelectorAll('.delete-button').forEach(button => {
-                button.onclick = async (e) => {
-                    e.stopPropagation();
-                    itemToDeleteId = e.currentTarget.dataset.id;
-                    itemToDeleteType = e.currentTarget.dataset.type; // 'task' o 'note'
-                    confirmDeleteMessage.textContent = `¿Estás seguro de que quieres eliminar esta ${itemToDeleteType === 'task' ? 'tarea' : 'nota'}?`;
-                    confirmDeleteModal.style.display = 'flex';
-                };
-            });
-        };
-
-        /**
-         * Maneja la lógica para posponer una tarea.
-         * Cambia la fecha de vencimiento al día siguiente y el estado a 'upcoming' si estaba 'pending'.
-         * @param {string} taskId - ID de la tarea a posponer.
-         */
-        const postponeTask = async (taskId) => {
-            const taskRef = doc(getTasksCollectionRef(), taskId);
-            const taskDocSnap = await getDoc(taskRef);
-            const taskData = taskDocSnap.data();
-
-            if (taskData) {
-                const today = new Date();
-                today.setDate(today.getDate() + 1);
-                const newDueDate = today.toISOString().split('T')[0];
-
-                await updateDoc(taskRef, {
-                    dueDate: newDueDate,
-                    status: 'upcoming'
-                });
-                fetchAndRenderTasks(currentView === 'home' ? 'all' : currentView);
-                renderDashboardCounts();
-            }
-        };
-
-        /**
-         * Muestra el modal de tarea con los datos precargados para edición.
-         * @param {string} taskId - ID de la tarea a editar.
-         */
-        const showTaskModalForEdit = async (taskId) => {
-            const taskRef = doc(getTasksCollectionRef(), taskId);
-            const taskDocSnap = await getDoc(taskRef);
-            const taskData = taskDocSnap.data();
-
-            if (taskData) {
-                taskModalTitle.textContent = 'Editar Tarea';
-                taskIdInput.value = taskId;
-                taskNameInput.value = taskData.name;
-                taskAreaSelect.value = taskData.area;
-                taskFrequencySelect.value = taskData.frequency;
-                taskDueDateInput.value = taskData.dueDate || '';
-                taskModal.style.display = 'flex';
-            }
-        };
-
-        /**
-         * Maneja la lógica para eliminar una tarea o nota.
-         * @param {string} id - ID del elemento a eliminar.
-         * @param {string} type - Tipo de elemento ('task' o 'note').
-         */
-        const deleteItem = async (id, type) => {
-            if (!id || !type) return;
-
-            try {
-                if (type === 'task') {
-                    await deleteDoc(doc(getTasksCollectionRef(), id));
-                    console.log("Tarea eliminada:", id);
-                    fetchAndRenderTasks(currentView === 'home' ? 'all' : currentView);
-                    renderDashboardCounts();
-                } else if (type === 'note') {
-                    // Obtener la nota para ver si tiene adjuntos
-                    const noteRef = doc(getNotesCollectionRef(), id);
-                    const noteDoc = await getDoc(noteRef);
-                    const noteData = noteDoc.data();
-
-                    if (noteData && noteData.attachmentPath) {
-                        // Eliminar archivo de Storage si existe
-                        const fileRef = ref(storage, noteData.attachmentPath);
-                        await deleteObject(fileRef);
-                        console.log("Archivo adjunto eliminado de Storage:", noteData.attachmentPath);
-                    }
-                    await deleteDoc(noteRef);
-                    console.log("Nota eliminada:", id);
-                    fetchAndRenderNotes(); // Re-renderizar notas después de eliminar
-                }
-            } catch (error) {
-                console.error(`Error al eliminar ${type}:`, error);
-            } finally {
-                itemToDeleteId = null;
-                itemToDeleteType = null;
-            }
-        };
-
-        // Funciones para la gestión de Notas
-        /**
-         * Crea el HTML para un elemento de nota.
-         * @param {Object} note - Objeto de la nota con sus propiedades.
-         * @returns {HTMLElement} El elemento LI HTML de la nota.
-         */
-        const createNoteItemHTML = (note) => {
-            const noteItem = document.createElement('li');
-            noteItem.className = 'note-item';
-            noteItem.dataset.id = note.id;
-            noteItem.innerHTML = `
-                <div class="note-info">
-                    <div class="note-title">${note.title}</div>
-                    <div class="note-content-preview">
-                        ${note.content.substring(0, 100)}${note.content.length > 100 ? '...' : ''}
-                        ${note.attachmentName ? `<br><i class="material-icons" style="font-size:16px;vertical-align:middle;">attach_file</i> ${note.attachmentName}` : ''}
+                <div>
+                    <h3 class="text-xl font-semibold text-gray-700 mb-2">Porcentaje de Completación</h3>
+                    <div class="progress-bar-container">
+                        <div id="completionProgressBar" class="progress-bar-fill" style="width: 0%;">0%</div>
                     </div>
                 </div>
-                <div class="note-actions">
-                    <button class="note-action-button edit-button" data-id="${note.id}" title="Editar nota">
-                        <i class="material-icons">edit</i>
-                    </button>
-                    <button class="note-action-button delete-button" data-id="${note.id}" data-type="note" title="Eliminar nota">
-                        <i class="material-icons">delete</i>
-                    </button>
+
+                <div>
+                    <h3 class="text-xl font-semibold text-gray-700 mb-2">Mensaje Motivacional</h3>
+                    <p id="motivationalMessage" class="text-gray-700 italic text-base">¡Vamos a empezar a organizar tu hogar!</p>
                 </div>
-            `;
-            // Listener para ver el contenido completo de la nota
-            noteItem.querySelector('.note-info').addEventListener('click', () => {
-                showNoteModalForEdit(note.id); // Reutilizar la función de edición para ver/editar
-            });
-            return noteItem;
-        };
+            </div>
+        </section>
 
-        /**
-         * Función asincrónica para obtener las notas de Firestore y renderizarlas.
-         * @param {string} searchTerm - Término de búsqueda para filtrar las notas.
-         */
-        const fetchAndRenderNotes = async (searchTerm = '') => {
-            if (!currentUserId) return;
+        <!-- Sección "Historial" (Tareas completadas) -->
+        <section id="history" class="tab-content hidden">
+            <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Historial de Tareas</h1>
+            <div id="historyTaskList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Las tareas completadas se cargarán aquí dinámicamente -->
+            </div>
+        </section>
 
-            notesList.innerHTML = ''; // Limpiar la lista de notas
-            const notesRef = getNotesCollectionRef();
-            const querySnapshot = await getDocs(notesRef);
-            let notes = [];
-            querySnapshot.forEach((doc) => {
-                notes.push({ id: doc.id, ...doc.data() });
-            });
+    </main>
 
-            // Filtrar notas si hay un término de búsqueda
-            if (searchTerm) {
-                const lowerCaseSearchTerm = searchTerm.toLowerCase();
-                notes = notes.filter(note => 
-                    note.title.toLowerCase().includes(lowerCaseSearchTerm) ||
-                    (note.content && note.content.toLowerCase().includes(lowerCaseSearchTerm))
-                );
-            }
+    <!-- Modal para Añadir/Editar Tarea de Limpieza -->
+    <div id="taskModal" class="modal fixed inset-0 flex items-center justify-center p-4 hidden">
+        <div class="modal-content w-full max-w-lg p-6 space-y-4">
+            <h2 id="taskModalTitle" class="text-2xl font-bold text-gray-800 mb-4">Añadir Nueva Tarea</h2>
+            <input type="hidden" id="taskId">
+            <div>
+                <label for="taskName" class="block text-gray-700 font-medium mb-2">Nombre de la Tarea</label>
+                <input type="text" id="taskName" placeholder="Ej: Limpiar el baño" class="focus:ring-indigo-500 focus:border-indigo-500">
+            </div>
+            <div>
+                <label for="taskDescription" class="block text-gray-700 font-medium mb-2">Descripción (Opcional)</label>
+                <textarea id="taskDescription" rows="2" placeholder="Detalles específicos de la tarea" class="focus:ring-indigo-500 focus:border-indigo-500"></textarea>
+            </div>
+            <div>
+                <label for="taskCategory" class="block text-gray-700 font-medium mb-2">Categoría</label>
+                <select id="taskCategory" class="focus:ring-indigo-500 focus:border-indigo-500">
+                    <option value="Baño">Baño</option>
+                    <option value="Cocina">Cocina</option>
+                    <option value="Suelo">Suelo</option>
+                    <option value="Dormitorio">Dormitorio</option>
+                    <option value="General">General</option>
+                    <option value="Pasillo">Pasillo</option>
+                    <option value="Balcón">Balcón</option>
+                    <option value="Otro">Otro</option>
+                </select>
+            </div>
+            <div>
+                <label for="taskFrequencyUnit" class="block text-gray-700 font-medium mb-2">Frecuencia</label>
+                <div class="flex space-x-2">
+                    <input type="number" id="taskFrequencyValue" min="1" value="1" class="w-1/3 focus:ring-indigo-500 focus:border-indigo-500">
+                    <select id="taskFrequencyUnit" class="w-2/3 focus:ring-indigo-500 focus:border-indigo-500">
+                        <option value="days">Días</option>
+                        <option value="weeks">Semanas</option>
+                        <option value="months">Meses</option>
+                        <option value="years">Años</option>
+                        <option value="specific_days">Días de la Semana</option>
+                    </select>
+                </div>
+            </div>
+            <div id="daysOfWeekSelection" class="mt-4 hidden">
+                <label class="block text-gray-700 font-medium mb-2">Selecciona los días:</label>
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-sm">
+                    <label class="flex items-center">
+                        <input type="checkbox" name="daysOfWeek" value="0" class="mr-2 rounded text-indigo-600 focus:ring-indigo-500"> Domingo
+                    </label>
+                    <label class="flex items-center">
+                        <input type="checkbox" name="daysOfWeek" value="1" class="mr-2 rounded text-indigo-600 focus:ring-indigo-500"> Lunes
+                    </label>
+                    <label class="flex items-center">
+                        <input type="checkbox" name="daysOfWeek" value="2" class="mr-2 rounded text-indigo-600 focus:ring-indigo-500"> Martes
+                    </label>
+                    <label class="flex items-center">
+                        <input type="checkbox" name="daysOfWeek" value="3" class="mr-2 rounded text-indigo-600 focus:ring-indigo-500"> Miércoles
+                    </label>
+                    <label class="flex items-center">
+                        <input type="checkbox" name="daysOfWeek" value="4" class="mr-2 rounded text-indigo-600 focus:ring-indigo-500"> Jueves
+                    </label>
+                    <label class="flex items-center">
+                        <input type="checkbox" name="daysOfWeek" value="5" class="mr-2 rounded text-indigo-600 focus:ring-indigo-500"> Viernes
+                    </label>
+                    <label class="flex items-center">
+                        <input type="checkbox" name="daysOfWeek" value="6" class="mr-2 rounded text-indigo-600 focus:ring-indigo-500"> Sábado
+                    </label>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-4 mt-6">
+                <button id="cancelTaskBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-xl">Cancelar</button>
+                <button id="saveTaskBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-xl">Guardar Tarea</button>
+            </div>
+        </div>
+    </div>
 
-            notes.forEach(note => {
-                const noteItem = createNoteItemHTML(note);
-                notesList.appendChild(noteItem);
-            });
+    <!-- Modal para Añadir/Editar Nota General -->
+    <div id="noteModal" class="modal fixed inset-0 flex items-center justify-center p-4 hidden">
+        <div class="modal-content w-full max-w-lg p-6 space-y-4">
+            <h2 id="noteModalTitle" class="text-2xl font-bold text-gray-800 mb-4">Añadir Nueva Nota</h2>
+            <input type="hidden" id="noteId">
+            <div>
+                <label for="noteTitle" class="block text-gray-700 font-medium mb-2">Título de la Nota</label>
+                <input type="text" id="noteTitle" placeholder="Ej: Lentejas de la abuela / Cambiar filtro de agua" class="focus:ring-blue-500 focus:border-blue-500">
+            </div>
+            <div>
+                <label for="noteContent" class="block text-gray-700 font-medium mb-2">Contenido de la Nota</label>
+                <textarea id="noteContent" rows="6" placeholder="Pasos para preparar la receta / Detalles de la nota" class="focus:ring-blue-500 focus:border-blue-500"></textarea>
+            </div>
+            <div class="mt-4">
+                <label for="noteFile" class="block text-gray-700 font-medium mb-2">Adjuntar Archivo (Opcional)</label>
+                <input type="file" id="noteFile" class="focus:ring-blue-500 focus:border-blue-500">
+                <p class="text-red-500 text-xs mt-1">
+                    Advertencia: Los archivos se guardan localmente en tu navegador.
+                    Evita adjuntar archivos grandes (max ~5MB total).
+                </p>
+                <div id="currentAttachedFile" class="mt-2 text-sm text-gray-600 hidden">
+                    Archivo actual: <span id="attachedFileName" class="font-medium"></span>
+                    <button id="removeAttachedFile" class="text-red-500 hover:text-red-700 ml-2"><i class="fas fa-times-circle"></i> Eliminar</button>
+                </div>
+            </div>
+            <div class="flex justify-end space-x-4 mt-6">
+                <button id="cancelNoteBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-xl">Cancelar</button>
+                <button id="saveNoteBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-xl">Guardar Nota</button>
+            </div>
+        </div>
+    </div>
 
-            attachNoteItemListeners();
-        };
+    <!-- Modal de Confirmación Personalizado -->
+    <div id="confirmModal" class="modal fixed inset-0 flex items-center justify-center p-4 hidden">
+        <div class="modal-content w-full max-w-sm p-6 space-y-4 text-center">
+            <p id="confirmMessage" class="text-lg font-medium text-gray-700"></p>
+            <div class="flex justify-center space-x-4 mt-6">
+                <button id="confirmCancelBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-xl">Cancelar</button>
+                <button id="confirmOkBtn" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-xl">Confirmar</button>
+            </div>
+        </div>
+    </div>
 
-        /**
-         * Adjunta los listeners de eventos a los botones de acción de las notas.
-         */
-        const attachNoteItemListeners = () => {
-            document.querySelectorAll('.note-action-button.edit-button').forEach(button => {
-                button.onclick = async (e) => {
-                    e.stopPropagation();
-                    const noteId = e.currentTarget.dataset.id;
-                    await showNoteModalForEdit(noteId);
-                };
-            });
+    <!-- Modal para mostrar tareas del día en el calendario -->
+    <div id="dayTasksModal" class="modal fixed inset-0 flex items-center justify-center p-4 hidden">
+        <div class="modal-content w-full max-w-md p-6 space-y-4">
+            <h2 id="dayTasksModalTitle" class="text-2xl font-bold text-gray-800 mb-4">Tareas para [Fecha]</h2>
+            <ul id="dayTasksModalContent" class="max-h-80 overflow-y-auto">
+                <!-- Tasks will be listed here -->
+            </ul>
+            <div class="flex justify-end mt-4">
+                <button id="closeDayTasksModalBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-xl">Cerrar</button>
+            </div>
+        </div>
+    </div>
 
-            document.querySelectorAll('.note-action-button.delete-button').forEach(button => {
-                button.onclick = async (e) => {
-                    e.stopPropagation();
-                    itemToDeleteId = e.currentTarget.dataset.id;
-                    itemToDeleteType = e.currentTarget.dataset.type; // Debería ser 'note'
-                    confirmDeleteMessage.textContent = `¿Estás seguro de que quieres eliminar esta nota?`;
-                    confirmDeleteModal.style.display = 'flex';
-                };
-            });
-        };
 
-        /**
-         * Muestra el modal de notas con los datos precargados para edición o para ver.
-         * @param {string} noteId - ID de la nota a editar.
-         */
-        const showNoteModalForEdit = async (noteId) => {
-            const noteRef = doc(getNotesCollectionRef(), noteId);
-            const noteDocSnap = await getDoc(noteRef);
-            const noteData = noteDocSnap.data();
+    <script>
+        // Funciones de utilidad para manejar el almacenamiento local
+        const storageKey = 'houseControlApp'; // Clave principal para localStorage
+        const appMessageDiv = document.getElementById('appMessage');
+        let messageTimeout;
 
-            if (noteData) {
-                noteModalTitle.textContent = 'Editar Nota';
-                noteIdInput.value = noteId;
-                noteTitleInput.value = noteData.title;
-                noteContentInput.value = noteData.content || '';
+        // Muestra un mensaje temporal en la parte superior de la pantalla
+        function showMessage(message, type = 'error', duration = 3000) {
+            clearTimeout(messageTimeout);
+            appMessageDiv.textContent = message;
+            appMessageDiv.className = ``; // Reset classes
+            appMessageDiv.classList.add('show', type); // Add type class for styling (error/success)
+            appMessageDiv.classList.remove('hidden'); // Ensure it's visible
 
-                // Mostrar/ocultar y rellenar información del adjunto existente
-                if (noteData.attachmentName && noteData.attachmentURL) {
-                    existingAttachmentLink.textContent = noteData.attachmentName;
-                    existingAttachmentLink.href = noteData.attachmentURL;
-                    existingAttachmentDisplay.style.display = 'flex';
-                } else {
-                    existingAttachmentDisplay.style.display = 'none';
-                    existingAttachmentLink.textContent = '';
-                    existingAttachmentLink.href = '#';
+            messageTimeout = setTimeout(() => {
+                appMessageDiv.classList.remove('show');
+                appMessageDiv.classList.add('hidden'); // Hide after transition
+            }, duration);
+        }
+
+        // Carga los datos de localStorage
+        function loadData() {
+            const data = localStorage.getItem(storageKey);
+            return data ? JSON.parse(data) : {
+                tasks: [],
+                notes: [] // Ahora unificado
+            };
+        }
+
+        // Guarda los datos en localStorage
+        function saveData(data) {
+            localStorage.setItem(storageKey, JSON.stringify(data));
+        }
+
+        let appData = loadData(); // Carga los datos al iniciar la aplicación
+
+        // --- Gestión de Tareas de Limpieza ---
+
+        // Función para renderizar una tarea individual
+        function renderTask(task) {
+            const now = new Date();
+            const lastCompleted = task.lastCompleted ? new Date(task.lastCompleted) : null;
+            let nextDueDate = null;
+
+            if (task.frequencyUnit === 'specific_days' && task.daysOfWeek && task.daysOfWeek.length > 0) {
+                // Calculate next due date based on selected days of the week
+                let currentSearchDate = lastCompleted ? new Date(lastCompleted) : new Date(now);
+                if (lastCompleted) {
+                    currentSearchDate.setDate(currentSearchDate.getDate() + 1); // Start searching from the day after last completed
                 }
 
-                fileUploadStatus.style.display = 'none'; // Ocultar estado de subida anterior
-                noteAttachmentInput.value = ''; // Limpiar el input de archivo al abrir el modal
-                noteModal.style.display = 'flex';
+                let foundNextDay = false;
+                for (let i = 0; i < 14; i++) { // Check up to 14 days to ensure we find a next day
+                    const dayOfWeek = currentSearchDate.getDay(); // 0 = Sunday, 6 = Saturday
+                    if (task.daysOfWeek.includes(String(dayOfWeek))) { // daysOfWeek stores strings
+                        nextDueDate = new Date(currentSearchDate);
+                        foundNextDay = true;
+                        break;
+                    }
+                    currentSearchDate.setDate(currentSearchDate.getDate() + 1);
+                }
+
+                if (!foundNextDay) { // Fallback if no day found in the loop
+                    let tempDate = lastCompleted ? new Date(lastCompleted) : new Date(now);
+                    tempDate.setDate(tempDate.getDate() + 1); // Start from next day
+                    for(let i = 0; i < 7; i++) { // Search for the next valid day within 7 days
+                        const dayToCheck = (tempDate.getDay() + i) % 7;
+                        if (task.daysOfWeek.includes(String(dayToCheck))) {
+                            nextDueDate = new Date(tempDate);
+                            nextDueDate.setDate(tempDate.getDate() + i);
+                            break;
+                        }
+                    }
+                }
+
+            } else if (lastCompleted) {
+                // Original frequency logic (days, weeks, months, years)
+                nextDueDate = new Date(lastCompleted);
+                if (task.frequencyUnit === 'days') {
+                    nextDueDate.setDate(nextDueDate.getDate() + task.frequencyValue);
+                } else if (task.frequencyUnit === 'weeks') {
+                    nextDueDate.setDate(nextDueDate.getDate() + (task.frequencyValue * 7));
+                } else if (task.frequencyUnit === 'months') {
+                    nextDueDate.setMonth(nextDueDate.getMonth() + task.frequencyValue);
+                } else if (task.frequencyUnit === 'years') {
+                    nextDueDate.setFullYear(nextDueDate.getFullYear() + task.frequencyValue);
+                }
+            } else {
+                nextDueDate = now; // If never completed, consider it due "today"
             }
-        };
 
-        // Event listeners de navegación
-        navHome.addEventListener('click', () => {
-            currentView = 'home';
-            dashboardView.style.display = 'block';
-            historyView.style.display = 'none';
-            notesView.style.display = 'none';
-            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-            navHome.classList.add('active');
-            fabButton.style.display = 'flex'; // Mostrar FAB en vista de inicio
-            fetchAndRenderTasks('all');
-            renderDashboardCounts();
-        });
+            // Apply postponement if exists and is later than the calculated nextDueDate
+            if (task.postponeUntilDate) {
+                const postponeDate = new Date(task.postponeUntilDate);
+                if (postponeDate > nextDueDate) {
+                    nextDueDate = postponeDate;
+                }
+            }
 
-        navNotes.addEventListener('click', () => {
-            currentView = 'notes';
-            dashboardView.style.display = 'none';
-            historyView.style.display = 'none';
-            notesView.style.display = 'block';
-            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-            navNotes.classList.add('active');
-            fabButton.style.display = 'none'; // Ocultar FAB en vista de notas (usaremos el botón interno)
-            fetchAndRenderNotes(); // Cargar todas las notas
-        });
 
-        navCalendar.addEventListener('click', () => {
-            console.log("Navegación a Calendario");
-            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-            navCalendar.classList.add('active');
-            currentView = 'calendar';
-            dashboardView.style.display = 'block'; // Ocultar otras vistas
-            historyView.style.display = 'none';
-            notesView.style.display = 'none';
-            fabButton.style.display = 'flex';
-            fetchAndRenderTasks('all'); 
-            renderDashboardCounts();
-        });
+            const isDueToday = nextDueDate && nextDueDate.toDateString() === now.toDateString() && !task.isCompleted;
+            const isOverdue = nextDueDate && nextDueDate < now && !task.isCompleted;
+            const isCompleted = task.isCompleted;
 
-        navHistory.addEventListener('click', () => {
-            currentView = 'history';
-            dashboardView.style.display = 'none';
-            historyView.style.display = 'block';
-            notesView.style.display = 'none';
-            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
-            navHistory.classList.add('active');
-            fabButton.style.display = 'none'; // Ocultar FAB en historial
-            fetchAndRenderTasks('completed');
-        });
+            let statusText = '';
+            let cardClasses = `task-card p-6 flex items-center space-x-4 ${isCompleted ? 'completed-task' : ''} category-${task.category.toLowerCase().replace(/\s/g, '')}`;
 
-        // Event listener para el botón FAB (Añadir Tarea)
-        fabButton.addEventListener('click', () => {
-            taskModalTitle.textContent = 'Añadir Nueva Tarea';
-            taskIdInput.value = ''; // Limpiar ID para asegurarse de que es una nueva tarea
+            if (isCompleted) {
+                statusText = `Completada: ${formatDate(new Date(task.lastCompleted))}`;
+                cardClasses = `task-card p-6 flex items-center space-x-4 completed-task category-${task.category.toLowerCase().replace(/\s/g, '')}`;
+            } else if (isDueToday) {
+                statusText = 'Vence Hoy';
+                cardClasses = `task-card p-6 flex items-center space-x-4 border-l-8 border-red-500 category-${task.category.toLowerCase().replace(/\s/g, '')}`;
+            } else if (isOverdue) {
+                statusText = `Atrasada: ${formatDate(nextDueDate)}`;
+                cardClasses = `task-card p-6 flex items-center space-x-4 border-l-8 border-red-700 category-${task.category.toLowerCase().replace(/\s/g, '')}`;
+            } else if (nextDueDate) {
+                statusText = `Próxima: ${formatDate(nextDueDate)}`;
+            } else {
+                statusText = 'Sin fecha';
+            }
+
+            const iconClass = getCategoryIcon(task.category);
+
+            return `
+                <div class="${cardClasses}" data-id="${task.id}">
+                    <div class="text-4xl text-gray-600 ${getCategoryColorClass(task.category)}">
+                        <i class="${iconClass}"></i>
+                    </div>
+                    <div class="flex-grow">
+                        <h3 class="text-xl font-semibold">${task.name}</h3>
+                        <p class="text-gray-500 text-sm">${task.category}</p>
+                        <p class="text-gray-600 text-sm font-medium">${statusText}</p>
+                    </div>
+                    <div class="flex flex-col space-y-2">
+                        ${!isCompleted ? `<button class="complete-btn bg-green-500 hover:bg-green-600 text-white text-xs px-3 py-1 rounded-full"><i class="fas fa-check"></i></button>` : ''}
+                        ${!isCompleted ? `<button class="postpone-btn bg-yellow-500 hover:bg-yellow-600 text-white text-xs px-3 py-1 rounded-full"><i class="fas fa-forward"></i></button>` : ''}
+                        <button class="edit-task-btn bg-blue-500 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded-full"><i class="fas fa-edit"></i></button>
+                        <button class="delete-task-btn bg-red-500 hover:bg-red-600 text-white text-xs px-3 py-1 rounded-full"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Obtiene el icono para la categoría
+        function getCategoryIcon(category) {
+            switch (category) {
+                case 'Baño': return 'fas fa-toilet';
+                case 'Suelo': return 'fas fa-broom';
+                case 'Cocina': return 'fas fa-utensils';
+                case 'Dormitorio': return 'fas fa-bed';
+                case 'General': return 'fas fa-house-cleaning';
+                case 'Pasillo': return 'fas fa-route';
+                case 'Balcón': return 'fas fa-wind';
+                default: return 'fas fa-tasks';
+            }
+        }
+
+        // Obtiene la clase de color para el icono de la categoría
+        function getCategoryColorClass(category) {
+            switch (category) {
+                case 'Baño': return 'text-teal-500';
+                case 'Suelo': return 'text-purple-500';
+                case 'Cocina': return 'text-orange-500';
+                case 'Dormitorio': return 'text-blue-500';
+                case 'General': return 'text-red-500';
+                case 'Pasillo': return 'text-gray-500';
+                case 'Balcón': return 'text-green-500';
+                default: return 'text-indigo-500';
+            }
+        }
+
+        // Formatea la fecha para mostrar
+        function formatDate(date) {
+            return date.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+
+        // Renderiza todas las tareas en las listas correspondientes
+        function renderAllTasks() {
+            const taskListDiv = document.getElementById('taskList');
+            const pendingTaskListDiv = document.getElementById('pendingTaskList');
+            const historyTaskListDiv = document.getElementById('historyTaskList');
+
+            taskListDiv.innerHTML = '';
+            pendingTaskListDiv.innerHTML = '';
+            historyTaskListDiv.innerHTML = '';
+
+            const now = new Date();
+            const todayTasks = [];
+            const pendingTasks = [];
+            const historyTasks = [];
+
+            appData.tasks.forEach(task => {
+                let nextDueDate = null;
+                const lastCompleted = task.lastCompleted ? new Date(task.lastCompleted) : null;
+
+                if (task.frequencyUnit === 'specific_days' && task.daysOfWeek && task.daysOfWeek.length > 0) {
+                    let currentSearchDate = lastCompleted ? new Date(lastCompleted) : new Date(now);
+                     if (lastCompleted) {
+                        currentSearchDate.setDate(currentSearchDate.getDate() + 1);
+                    }
+
+                    let foundNextDay = false;
+                    for (let i = 0; i < 14; i++) {
+                        const dayOfWeek = currentSearchDate.getDay();
+                        if (task.daysOfWeek.includes(String(dayOfWeek))) {
+                            nextDueDate = new Date(currentSearchDate);
+                            foundNextDay = true;
+                            break;
+                        }
+                        currentSearchDate.setDate(currentSearchDate.getDate() + 1);
+                    }
+
+                    if (!foundNextDay) {
+                        let tempDate = lastCompleted ? new Date(lastCompleted) : new Date(now);
+                        tempDate.setDate(tempDate.getDate() + 1); // Start from next day
+                        for(let i = 0; i < 7; i++) {
+                            const dayToCheck = (tempDate.getDay() + i) % 7;
+                            if (task.daysOfWeek.includes(String(dayToCheck))) {
+                                nextDueDate = new Date(tempDate);
+                                nextDueDate.setDate(tempDate.getDate() + i);
+                                break;
+                            }
+                        }
+                    }
+
+                } else if (lastCompleted) {
+                    nextDueDate = new Date(lastCompleted);
+                    if (task.frequencyUnit === 'days') {
+                        nextDueDate.setDate(nextDueDate.getDate() + task.frequencyValue);
+                    } else if (task.frequencyUnit === 'weeks') {
+                        nextDueDate.setDate(nextDueDate.getDate() + (task.frequencyValue * 7));
+                    } else if (task.frequencyUnit === 'months') {
+                        nextDueDate.setMonth(nextDueDate.getMonth() + task.frequencyValue);
+                    } else if (task.frequencyUnit === 'years') {
+                        nextDueDate.setFullYear(nextDueDate.getFullYear() + task.frequencyValue);
+                    }
+                } else {
+                    nextDueDate = now;
+                }
+
+                // Apply postponement if exists and is later than the calculated nextDueDate
+                if (task.postponeUntilDate) {
+                    const postponeDate = new Date(task.postponeUntilDate);
+                    if (postponeDate > nextDueDate) {
+                        nextDueDate = postponeDate;
+                    }
+                }
+
+                const isDueToday = nextDueDate && nextDueDate.toDateString() === now.toDateString();
+                const isOverdue = nextDueDate && nextDueDate < now;
+
+                if (task.isCompleted) {
+                    historyTasks.push(task);
+                } else if (isDueToday || isOverdue) {
+                    todayTasks.push(task);
+                } else {
+                    pendingTasks.push(task);
+                }
+            });
+
+            todayTasks.forEach(task => taskListDiv.innerHTML += renderTask(task));
+            pendingTasks.forEach(task => pendingTaskListDiv.innerHTML += renderTask(task));
+            historyTasks.sort((a, b) => new Date(b.lastCompleted) - new Date(a.lastCompleted));
+            historyTasks.forEach(task => historyTaskListDiv.innerHTML += renderTask(task));
+
+            addEventListenersToTaskButtons();
+        }
+
+        // Abre el modal de tarea para añadir o editar
+        function openTaskModal(task = null) {
+            const taskModal = document.getElementById('taskModal');
+            const taskIdInput = document.getElementById('taskId');
+            const taskNameInput = document.getElementById('taskName');
+            const taskDescriptionInput = document.getElementById('taskDescription');
+            const taskCategorySelect = document.getElementById('taskCategory');
+            const taskFrequencyValueInput = document.getElementById('taskFrequencyValue');
+            const taskFrequencyUnitSelect = document.getElementById('taskFrequencyUnit');
+            const daysOfWeekSelectionDiv = document.getElementById('daysOfWeekSelection');
+            const daysOfWeekCheckboxes = document.querySelectorAll('#daysOfWeekSelection input[type="checkbox"]');
+            const taskFrequencyValueInputContainer = taskFrequencyValueInput.closest('div.flex'); // Get the parent div of value and unit select
+            const taskModalTitle = document.getElementById('taskModalTitle');
+
+
+            // Reset form
+            taskIdInput.value = '';
             taskNameInput.value = '';
-            taskAreaSelect.value = 'Cocina'; // Valor por defecto
-            taskFrequencySelect.value = 'Diario'; // Valor por defecto
-            taskDueDateInput.value = new Date().toISOString().split('T')[0]; // Fecha por defecto: hoy
-            taskModal.style.display = 'flex';
+            taskDescriptionInput.value = '';
+            taskCategorySelect.value = 'General';
+            taskFrequencyValueInput.value = '1';
+            taskFrequencyUnitSelect.value = 'weeks';
+            daysOfWeekCheckboxes.forEach(checkbox => checkbox.checked = false);
+
+
+            if (task) {
+                taskModalTitle.textContent = 'Editar Tarea';
+                taskIdInput.value = task.id;
+                taskNameInput.value = task.name;
+                taskDescriptionInput.value = task.description || '';
+                taskCategorySelect.value = task.category;
+                taskFrequencyUnitSelect.value = task.frequencyUnit || 'weeks';
+
+
+                if (task.frequencyUnit === 'specific_days') {
+                    daysOfWeekSelectionDiv.classList.remove('hidden');
+                    taskFrequencyValueInputContainer.classList.add('hidden'); // Ocultar input de valor y selector de unidad
+                    if (task.daysOfWeek) {
+                        task.daysOfWeek.forEach(day => {
+                            const checkbox = document.querySelector(`#daysOfWeekSelection input[value="${day}"]`);
+                            if (checkbox) checkbox.checked = true;
+                        });
+                    }
+                } else {
+                    daysOfWeekSelectionDiv.classList.add('hidden');
+                    taskFrequencyValueInputContainer.classList.remove('hidden'); // Mostrar input de valor y selector de unidad
+                    taskFrequencyValueInput.value = task.frequencyValue || 1;
+                }
+
+            } else {
+                taskModalTitle.textContent = 'Añadir Nueva Tarea';
+                daysOfWeekSelectionDiv.classList.add('hidden');
+                taskFrequencyValueInputContainer.classList.remove('hidden');
+            }
+            taskModal.classList.remove('hidden');
+        }
+
+        // Cierra el modal de tarea
+        function closeTaskModal() {
+            document.getElementById('taskModal').classList.add('hidden');
+        }
+
+        // Manejar el cambio en la unidad de frecuencia para mostrar/ocultar días de la semana
+        document.getElementById('taskFrequencyUnit').addEventListener('change', (e) => {
+            const daysOfWeekSelectionDiv = document.getElementById('daysOfWeekSelection');
+            const taskFrequencyValueInput = document.getElementById('taskFrequencyValue');
+            const taskFrequencyValueInputContainer = taskFrequencyValueInput.closest('div.flex');
+
+            if (e.target.value === 'specific_days') {
+                daysOfWeekSelectionDiv.classList.remove('hidden');
+                taskFrequencyValueInputContainer.classList.add('hidden');
+            } else {
+                daysOfWeekSelectionDiv.classList.add('hidden');
+                taskFrequencyValueInputContainer.classList.remove('hidden');
+                taskFrequencyValueInput.value = '1';
+            }
         });
 
-        // Event listener para cerrar el modal de añadir/editar tarea
-        closeTaskModalButton.addEventListener('click', () => {
-            taskModal.style.display = 'none';
-        });
+        // Añade/Edita una tarea
+        document.getElementById('saveTaskBtn').addEventListener('click', () => {
+            const taskId = document.getElementById('taskId').value;
+            const taskName = document.getElementById('taskName').value.trim();
+            const taskDescription = document.getElementById('taskDescription').value.trim();
+            const taskCategory = document.getElementById('taskCategory').value;
+            const taskFrequencyUnit = document.getElementById('taskFrequencyUnit').value;
 
-        // Event listener para guardar la tarea (Añadir o Editar)
-        saveTaskButton.addEventListener('click', async () => {
-            const taskId = taskIdInput.value;
-            const taskName = taskNameInput.value;
-            const taskArea = taskAreaSelect.value;
-            const taskFrequency = taskFrequencySelect.value;
-            const selectedDueDate = taskDueDateInput.value;
+            let taskFrequencyValue = null;
+            let daysOfWeek = [];
 
             if (!taskName) {
-                console.error("El nombre de la tarea no puede estar vacío.");
+                showMessage('El nombre de la tarea no puede estar vacío.', 'error');
                 return;
             }
 
-            const dueDateToSave = selectedDueDate || new Date().toISOString().split('T')[0];
+            if (taskFrequencyUnit === 'specific_days') {
+                daysOfWeek = Array.from(document.querySelectorAll('#daysOfWeekSelection input[type="checkbox"]:checked'))
+                               .map(checkbox => checkbox.value);
+                if (daysOfWeek.length === 0) {
+                    showMessage('Debes seleccionar al menos un día de la semana para esta frecuencia.', 'error');
+                    return;
+                }
+            } else {
+                taskFrequencyValue = parseInt(document.getElementById('taskFrequencyValue').value);
+                if (isNaN(taskFrequencyValue) || taskFrequencyValue <= 0) {
+                    showMessage('La frecuencia debe ser un número positivo.', 'error');
+                    return;
+                }
+            }
+
 
             if (taskId) {
-                const taskRef = doc(getTasksCollectionRef(), taskId);
-                await updateDoc(taskRef, {
-                    name: taskName,
-                    area: taskArea,
-                    frequency: taskFrequency,
-                    dueDate: dueDateToSave
-                });
+                // Editar tarea existente
+                const taskIndex = appData.tasks.findIndex(t => t.id === taskId);
+                if (taskIndex > -1) {
+                    appData.tasks[taskIndex] = {
+                        ...appData.tasks[taskIndex],
+                        name: taskName,
+                        description: taskDescription,
+                        category: taskCategory,
+                        frequencyValue: taskFrequencyValue,
+                        frequencyUnit: taskFrequencyUnit,
+                        daysOfWeek: daysOfWeek
+                    };
+                }
             } else {
-                await addDoc(getTasksCollectionRef(), {
+                // Añadir nueva tarea
+                const newTask = {
+                    id: crypto.randomUUID(),
                     name: taskName,
-                    area: taskArea,
-                    frequency: taskFrequency,
-                    status: 'pending',
-                    createdAt: new Date().toISOString(),
-                    dueDate: dueDateToSave
-                });
+                    description: taskDescription,
+                    category: taskCategory,
+                    frequencyValue: taskFrequencyValue,
+                    frequencyUnit: taskFrequencyUnit,
+                    daysOfWeek: daysOfWeek,
+                    lastCompleted: null,
+                    isCompleted: false,
+                    postponeUntilDate: null // New property for postponement
+                };
+                appData.tasks.push(newTask);
             }
-            taskModal.style.display = 'none';
-            fetchAndRenderTasks(currentView === 'home' ? 'all' : currentView);
-            renderDashboardCounts();
+            saveData(appData);
+            renderAllTasks();
+            closeTaskModal();
+            showMessage('Tarea guardada con éxito.', 'success');
         });
 
-        // Event listener para cerrar el modal de consejos
-        tipCloseButton.addEventListener('click', () => {
-            tipModal.style.display = 'none';
-        });
+        // Event listener para el botón "Añadir tarea"
+        document.getElementById('addTaskBtn').addEventListener('click', () => openTaskModal());
+        document.getElementById('cancelTaskBtn').addEventListener('click', closeTaskModal);
 
-        // Event listeners para las tarjetas del dashboard
-        todayTasksCard.addEventListener('click', () => {
-            fetchAndRenderTasks('today');
-            console.log("Mostrando tareas de hoy");
-        });
+        // Añadir event listeners a los botones de las tarjetas de tareas
+        function addEventListenersToTaskButtons() {
+            document.querySelectorAll('.complete-btn').forEach(button => {
+                button.onclick = (e) => {
+                    e.stopPropagation();
+                    const taskId = e.target.closest('.task-card').dataset.id;
+                    const taskIndex = appData.tasks.findIndex(t => t.id === taskId);
+                    if (taskIndex > -1) {
+                        appData.tasks[taskIndex].lastCompleted = new Date().toISOString();
+                        appData.tasks[taskIndex].isCompleted = true;
+                        appData.tasks[taskIndex].postponeUntilDate = null; // Clear postponement on completion
+                        saveData(appData);
+                        renderAllTasks();
+                        showMessage('Tarea marcada como completada.', 'success');
+                        renderProgress(); // Update progress after completing a task
+                    }
+                };
+            });
 
-        pendingTasksCard.addEventListener('click', () => {
-            fetchAndRenderTasks('pending');
-            console.log("Mostrando tareas pendientes");
-        });
+            document.querySelectorAll('.postpone-btn').forEach(button => {
+                button.onclick = (e) => {
+                    e.stopPropagation();
+                    const taskId = e.target.closest('.task-card').dataset.id;
+                    const taskIndex = appData.tasks.findIndex(t => t.id === taskId);
+                    if (taskIndex > -1) {
+                        const now = new Date();
+                        // Postpone by 1 day from now
+                        const postponeDate = new Date(now.getTime() + (24 * 60 * 60 * 1000));
+                        appData.tasks[taskIndex].postponeUntilDate = postponeDate.toISOString();
+                        saveData(appData);
+                        renderAllTasks();
+                        showMessage('Tarea pospuesta por 1 día.', 'success');
+                    }
+                };
+            });
 
-        // Event listeners para el modal de confirmación de eliminación (general)
-        confirmDeleteYesButton.addEventListener('click', async () => {
-            await deleteItem(itemToDeleteId, itemToDeleteType);
-            confirmDeleteModal.style.display = 'none';
-        });
+            document.querySelectorAll('.edit-task-btn').forEach(button => {
+                button.onclick = (e) => {
+                    e.stopPropagation();
+                    const taskId = e.target.closest('.task-card').dataset.id;
+                    const task = appData.tasks.find(t => t.id === taskId);
+                    if (task) {
+                        openTaskModal(task);
+                    }
+                };
+            });
 
-        confirmDeleteNoButton.addEventListener('click', () => {
-            itemToDeleteId = null;
-            itemToDeleteType = null;
-            confirmDeleteModal.style.display = 'none';
-        });
+            document.querySelectorAll('.delete-task-btn').forEach(button => {
+                button.onclick = (e) => {
+                    e.stopPropagation();
+                    const taskId = e.target.closest('.task-card').dataset.id;
+                    showConfirmModal('¿Estás seguro de que quieres eliminar esta tarea?', () => {
+                        appData.tasks = appData.tasks.filter(t => t.id !== taskId);
+                        saveData(appData);
+                        renderAllTasks();
+                        showMessage('Tarea eliminada.', 'success');
+                        renderProgress(); // Update progress after deleting a task
+                    });
+                };
+            });
+        }
 
-        // Event listener para el botón "Nueva Nota"
-        addNoteButton.addEventListener('click', () => {
-            noteModalTitle.textContent = 'Nueva Nota';
-            noteIdInput.value = '';
-            noteTitleInput.value = '';
-            noteContentInput.value = '';
-            noteAttachmentInput.value = ''; // Limpiar el input de archivo
-            fileUploadStatus.style.display = 'none'; // Ocultar estado de subida
-            existingAttachmentDisplay.style.display = 'none'; // Ocultar adjunto existente
-            noteModal.style.display = 'flex';
-        });
 
-        // Event listener para cerrar el modal de notas
-        closeNoteModalButton.addEventListener('click', () => {
-            noteModal.style.display = 'none';
-        });
+        // --- Gestión de Notas (Unificado) ---
 
-        // Event listener para guardar la nota (Añadir o Editar)
-        saveNoteButton.addEventListener('click', async () => {
-            const noteId = noteIdInput.value;
-            const noteTitle = noteTitleInput.value;
-            const noteContent = noteContentInput.value;
-            const file = noteAttachmentInput.files[0]; // Obtener el archivo seleccionado
+        // Renderiza una nota individual
+        function renderNote(note) {
+            let fileContentHtml = '';
+            let noteTypeClass = 'note-type-text'; // Default type
+            if (note.fileData) {
+                noteTypeClass = 'note-type-file';
+                if (note.fileType && note.fileType.startsWith('image/')) {
+                    fileContentHtml = `<img src="${note.fileData}" alt="Adjunto" class="mt-4 max-w-full h-auto rounded-lg shadow-md">`;
+                } else if (note.fileName) {
+                    fileContentHtml = `<p class="mt-4 text-sm text-gray-700 font-medium"><i class="fas fa-file"></i> Archivo: ${note.fileName}</p>`;
+                }
+            }
 
-            if (!noteTitle) {
-                console.error("El título de la nota no puede estar vacío.");
+            return `
+                <div class="note-card p-6 rounded-2xl shadow-md border border-gray-200 ${noteTypeClass}" data-id="${note.id}">
+                    <h3 class="text-xl font-semibold text-gray-800">${note.title}</h3>
+                    <p class="mt-2 text-sm text-gray-700 whitespace-pre-wrap">${note.content}</p>
+                    ${fileContentHtml}
+                    <div class="flex justify-end space-x-2 mt-4">
+                        <button class="edit-note-btn bg-blue-500 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded-full"><i class="fas fa-edit"></i></button>
+                        <button class="delete-note-btn bg-red-500 hover:bg-red-600 text-white text-xs px-3 py-1 rounded-full"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Renderiza todas las notas (con filtro de búsqueda)
+        function renderNotes() {
+            const noteListDiv = document.getElementById('noteList');
+            const searchTerm = document.getElementById('noteSearch').value.toLowerCase();
+
+            const filteredNotes = appData.notes.filter(note =>
+                note.title.toLowerCase().includes(searchTerm) ||
+                note.content.toLowerCase().includes(searchTerm)
+            );
+            noteListDiv.innerHTML = filteredNotes.map(renderNote).join('');
+            addEventListenersToNoteButtons();
+        }
+
+        // Abre el modal de nota
+        function openNoteModal(note = null) {
+            const noteModal = document.getElementById('noteModal');
+            const noteIdInput = document.getElementById('noteId');
+            const noteTitleInput = document.getElementById('noteTitle');
+            const noteContentInput = document.getElementById('noteContent');
+            const noteFileInput = document.getElementById('noteFile');
+            const currentAttachedFileDiv = document.getElementById('currentAttachedFile');
+            const attachedFileNameSpan = document.getElementById('attachedFileName');
+            const removeAttachedFileBtn = document.getElementById('removeAttachedFile');
+            const noteModalTitle = document.getElementById('noteModalTitle');
+
+            noteFileInput.value = ''; // Limpiar input de archivo al abrir modal
+            currentAttachedFileDiv.classList.add('hidden'); // Hide attachment info by default
+            attachedFileNameSpan.textContent = ''; // Clear file name
+
+            if (note) {
+                noteModalTitle.textContent = 'Editar Nota';
+                noteIdInput.value = note.id;
+                noteTitleInput.value = note.title;
+                noteContentInput.value = note.content;
+
+                if (note.fileData && note.fileName) {
+                    currentAttachedFileDiv.classList.remove('hidden');
+                    attachedFileNameSpan.textContent = note.fileName;
+                    removeAttachedFileBtn.onclick = () => {
+                        // When removing, set these to null in the note object, but don't save yet.
+                        // Saving will happen when the "Guardar Nota" button is clicked.
+                        const currentNoteInAppData = appData.notes.find(n => n.id === note.id);
+                        if (currentNoteInAppData) {
+                            currentNoteInAppData.fileData = null;
+                            currentNoteInAppData.fileName = null;
+                            currentNoteInAppData.fileType = null;
+                        }
+                        currentAttachedFileDiv.classList.add('hidden');
+                        attachedFileNameSpan.textContent = '';
+                    };
+                }
+
+            } else {
+                noteModalTitle.textContent = 'Añadir Nueva Nota';
+                noteIdInput.value = '';
+                noteTitleInput.value = '';
+                noteContentInput.value = '';
+            }
+            noteModal.classList.remove('hidden');
+        }
+
+        // Cierra el modal de nota
+        function closeNoteModal() {
+            document.getElementById('noteModal').classList.add('hidden');
+        }
+
+        // Añade/Edita una nota
+        document.getElementById('saveNoteBtn').addEventListener('click', async () => {
+            const noteId = document.getElementById('noteId').value;
+            const noteTitle = document.getElementById('noteTitle').value.trim();
+            const noteContent = document.getElementById('noteContent').value.trim();
+            const noteFileInput = document.getElementById('noteFile');
+
+            if (!noteTitle || !noteContent) {
+                showMessage('El título y el contenido de la nota no pueden estar vacíos.', 'error');
                 return;
             }
 
-            let attachmentURL = null;
-            let attachmentPath = null;
-            let attachmentName = null;
+            let fileData = null;
+            let fileName = null;
+            let fileType = null;
 
-            // Si estamos editando y no se ha seleccionado un nuevo archivo, mantener el adjunto existente
+            // If editing, try to get existing file data first
             if (noteId) {
-                const noteRef = doc(getNotesCollectionRef(), noteId);
-                const noteDocSnap = await getDoc(noteRef);
-                const noteData = noteDocSnap.data();
-                if (noteData && noteData.attachmentURL && noteData.attachmentPath && noteData.attachmentName && existingAttachmentDisplay.style.display === 'flex') {
-                    attachmentURL = noteData.attachmentURL;
-                    attachmentPath = noteData.attachmentPath;
-                    attachmentName = noteData.attachmentName;
-                }
-            }
-
-            // Si hay un archivo nuevo para subir
-            if (file) {
-                fileUploadStatus.style.display = 'block';
-                fileUploadStatus.textContent = 'Subiendo archivo...';
-                fileUploadStatus.classList.remove('error', 'success');
-
-                try {
-                    const fileName = `${Date.now()}_${file.name}`;
-                    // La ruta del storage debe incluir el ID de la nota para que sea única y fácil de gestionar
-                    // Si es una nueva nota, usaremos un ID temporal hasta que se cree el documento de Firestore
-                    const storagePath = `artifacts/${appId}/users/${currentUserId}/notes/${noteId || 'temp_note_id'}/${fileName}`;
-                    const storageRef = ref(storage, storagePath); 
-                    const uploadTask = await uploadBytes(storageRef, file);
-                    attachmentURL = await getDownloadURL(uploadTask.ref);
-                    attachmentPath = storageRef.fullPath;
-                    attachmentName = file.name;
-                    fileUploadStatus.textContent = `Archivo '${attachmentName}' subido.`;
-                    fileUploadStatus.classList.add('success');
-                } catch (error) {
-                    console.error("Error al subir el archivo:", error);
-                    fileUploadStatus.textContent = `Error al subir archivo: ${error.message}`;
-                    fileUploadStatus.classList.add('error');
-                    // Si la subida falla, la nota se guardará sin el adjunto
-                    attachmentURL = null;
-                    attachmentPath = null;
-                    attachmentName = null;
+                const existingNote = appData.notes.find(n => n.id === noteId);
+                if (existingNote) {
+                    fileData = existingNote.fileData;
+                    fileName = existingNote.fileName;
+                    fileType = existingNote.fileType;
                 }
             }
 
 
-            if (noteId) {
-                const noteRef = doc(getNotesCollectionRef(), noteId);
-                await updateDoc(noteRef, {
-                    title: noteTitle,
-                    content: noteContent,
-                    attachmentURL: attachmentURL,
-                    attachmentPath: attachmentPath,
-                    attachmentName: attachmentName
+            if (noteFileInput.files.length > 0) {
+                const file = noteFileInput.files[0];
+                fileName = file.name;
+                fileType = file.type;
+
+                // Simple comprobación de tamaño para evitar desbordar localStorage
+                if (file.size > 5 * 1024 * 1024) { // 5MB
+                    showMessage('El archivo es demasiado grande para guardar localmente. Por favor, adjunta archivos más pequeños.', 'error');
+                    return;
+                }
+
+                fileData = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    if (fileType.startsWith('text/')) {
+                        reader.readAsText(file);
+                    } else {
+                        reader.readAsDataURL(file); // For all other types, including images, save as Data URL (Base64)
+                    }
                 });
+            }
+
+
+            if (noteId) {
+                const noteIndex = appData.notes.findIndex(n => n.id === noteId);
+                if (noteIndex > -1) {
+                    appData.notes[noteIndex] = {
+                        ...appData.notes[noteIndex],
+                        title: noteTitle,
+                        content: noteContent,
+                        fileData: fileData, // Use the new fileData (can be null if removed or not changed)
+                        fileName: fileName,
+                        fileType: fileType
+                    };
+                }
             } else {
-                // Para nuevas notas, si se subió un archivo, necesitamos el ID del documento de Firestore
-                // para actualizar la ruta del archivo en Storage si se usó 'temp_note_id'
-                const newNoteRef = await addDoc(getNotesCollectionRef(), {
+                const newNote = {
+                    id: crypto.randomUUID(),
                     title: noteTitle,
                     content: noteContent,
-                    createdAt: new Date().toISOString(),
-                    attachmentURL: attachmentURL,
-                    attachmentPath: attachmentPath,
-                    attachmentName: attachmentName
-                });
-
-                // Si se subió un archivo con un ID temporal, actualizamos su ruta en Storage
-                if (file && attachmentPath && attachmentPath.includes('temp_note_id')) {
-                    const oldStorageRef = ref(storage, attachmentPath);
-                    const newStoragePath = `artifacts/${appId}/users/${currentUserId}/notes/${newNoteRef.id}/${attachmentName}`;
-                    const newStorageRef = ref(storage, newStoragePath);
-                    
-                    // Mover el archivo en Storage (no hay una operación directa de "mover", se copia y se borra el original)
-                    const newUploadTask = await uploadBytes(newStorageRef, file); // Volver a subir el mismo archivo
-                    const newAttachmentURL = await getDownloadURL(newUploadTask.ref);
-                    
-                    // Eliminar el archivo original con la ruta temporal
-                    await deleteObject(oldStorageRef).catch(e => console.warn("No se pudo eliminar el archivo temporal antiguo:", e));
-
-                    // Actualizar la nota en Firestore con la nueva URL y ruta
-                    await updateDoc(newNoteRef, {
-                        attachmentURL: newAttachmentURL,
-                        attachmentPath: newStorageRef.fullPath
-                    });
-                }
+                    fileData: fileData,
+                    fileName: fileName,
+                    fileType: fileType
+                };
+                appData.notes.push(newNote);
             }
-            noteModal.style.display = 'none';
-            fetchAndRenderNotes();
-            fileUploadStatus.style.display = 'none'; // Ocultar estado después de guardar
+            saveData(appData);
+            renderNotes();
+            closeNoteModal();
+            showMessage('Nota guardada con éxito.', 'success');
         });
 
-        // Event listener para eliminar el adjunto existente desde el modal de edición
-        deleteAttachmentButton.addEventListener('click', async () => {
-            const noteId = noteIdInput.value;
-            if (noteId) {
-                const noteRef = doc(getNotesCollectionRef(), noteId);
-                const noteDocSnap = await getDoc(noteRef);
-                const noteData = noteDocSnap.data();
+        // Event listeners para los botones de nota
+        document.getElementById('addNoteBtn').addEventListener('click', () => openNoteModal());
+        document.getElementById('cancelNoteBtn').addEventListener('click', closeNoteModal);
+        document.getElementById('noteSearch').addEventListener('keyup', renderNotes);
 
-                if (noteData && noteData.attachmentPath) {
-                    const fileRef = ref(storage, noteData.attachmentPath);
-                    try {
-                        await deleteObject(fileRef);
-                        console.log("Adjunto eliminado de Storage:", noteData.attachmentPath);
-                        await updateDoc(noteRef, {
-                            attachmentURL: null,
-                            attachmentPath: null,
-                            attachmentName: null
-                        });
-                        existingAttachmentDisplay.style.display = 'none'; // Ocultar
-                        fileUploadStatus.textContent = 'Adjunto eliminado con éxito.';
-                        fileUploadStatus.classList.remove('error');
-                        fileUploadStatus.classList.add('success');
-                        fileUploadStatus.style.display = 'block';
-                    } catch (error) {
-                        console.error("Error al eliminar adjunto de Storage:", error);
-                        fileUploadStatus.textContent = `Error al eliminar adjunto: ${error.message}`;
-                        fileUploadStatus.classList.remove('success');
-                        fileUploadStatus.classList.add('error');
-                        fileUploadStatus.style.display = 'block';
+
+        function addEventListenersToNoteButtons() {
+            document.querySelectorAll('.edit-note-btn').forEach(button => {
+                button.onclick = (e) => {
+                    const noteId = e.target.closest('div[data-id]').dataset.id;
+                    const note = appData.notes.find(n => n.id === noteId);
+                    if (note) {
+                        openNoteModal(note);
+                    }
+                };
+            });
+
+            document.querySelectorAll('.delete-note-btn').forEach(button => {
+                button.onclick = (e) => {
+                    const noteId = e.target.closest('div[data-id]').dataset.id;
+                    showConfirmModal('¿Estás seguro de que quieres eliminar esta nota?', () => {
+                        appData.notes = appData.notes.filter(n => n.id !== noteId);
+                        saveData(appData);
+                        renderNotes();
+                        showMessage('Nota eliminada.', 'success');
+                    });
+                };
+            });
+        }
+
+
+        // --- Funcionalidad de Pestañas ---
+        const navItems = document.querySelectorAll('.nav-item');
+        const tabContents = document.querySelectorAll('.tab-content');
+
+        navItems.forEach(item => {
+            item.addEventListener('click', () => {
+                // Remove active classes
+                navItems.forEach(nav => {
+                    nav.classList.remove('active-nav-tab');
+                    nav.querySelector('.nav-icon').classList.remove('active');
+                });
+                tabContents.forEach(content => content.classList.add('hidden'));
+
+                // Add active classes to clicked item
+                item.classList.add('active-nav-tab');
+                item.querySelector('.nav-icon').classList.add('active');
+
+                // Show corresponding tab content
+                const tabId = item.dataset.tab;
+                document.getElementById(tabId).classList.remove('hidden');
+
+                // Re-render content when switching tabs to ensure freshness
+                if (tabId === 'today' || tabId === 'pending' || tabId === 'history') {
+                    renderAllTasks();
+                } else if (tabId === 'notes') {
+                    renderNotes();
+                } else if (tabId === 'calendar') {
+                    renderCalendar();
+                } else if (tabId === 'progress') {
+                    renderProgress();
+                }
+            });
+        });
+
+        // --- Modal de Confirmación Personalizado (en lugar de alert/confirm) ---
+        function showConfirmModal(message, onConfirm) {
+            let confirmModal = document.getElementById('confirmModal');
+            if (!confirmModal) { // Solo crear si no existe
+                confirmModal = document.createElement('div');
+                confirmModal.id = 'confirmModal';
+                confirmModal.classList.add('modal', 'fixed', 'inset-0', 'flex', 'items-center', 'justify-center', 'p-4', 'z-50', 'hidden');
+                confirmModal.innerHTML = `
+                    <div class="modal-content w-full max-w-sm p-6 space-y-4 text-center">
+                        <p id="confirmMessage" class="text-lg font-medium text-gray-700"></p>
+                        <div class="flex justify-center space-x-4 mt-6">
+                            <button id="confirmCancelBtn" class="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-2 px-4 rounded-xl">Cancelar</button>
+                            <button id="confirmOkBtn" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-xl">Confirmar</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(confirmModal);
+            }
+
+            document.getElementById('confirmMessage').textContent = message;
+            confirmModal.classList.remove('hidden');
+
+            const confirmOkBtn = document.getElementById('confirmOkBtn');
+            const confirmCancelBtn = document.getElementById('confirmCancelBtn');
+
+            // Asegurarse de que los event listeners se añaden solo una vez por apertura del modal
+            const handleConfirm = () => {
+                onConfirm();
+                confirmModal.classList.add('hidden');
+                confirmOkBtn.removeEventListener('click', handleConfirm);
+                confirmCancelBtn.removeEventListener('click', handleCancel);
+            };
+
+            const handleCancel = () => {
+                confirmModal.classList.add('hidden');
+                confirmOkBtn.removeEventListener('click', handleConfirm);
+                confirmCancelBtn.removeEventListener('click', handleCancel);
+            };
+
+            // Remover listeners anteriores antes de añadir nuevos para evitar duplicados
+            confirmOkBtn.removeEventListener('click', handleConfirm);
+            confirmCancelBtn.removeEventListener('click', handleCancel);
+
+            confirmOkBtn.addEventListener('click', handleConfirm);
+            confirmCancelBtn.addEventListener('click', handleCancel);
+        }
+
+        // --- Calendar Functionality ---
+        let currentCalendarDate = new Date(); // To keep track of the month displayed
+
+        function renderCalendar() {
+            const calendarGrid = document.getElementById('calendar-grid');
+            const currentMonthYearHeader = document.getElementById('currentMonthYear');
+            calendarGrid.innerHTML = ''; // Clear previous calendar
+
+            const year = currentCalendarDate.getFullYear();
+            const month = currentCalendarDate.getMonth(); // 0-11
+
+            // Set current month and year in header
+            currentMonthYearHeader.textContent = new Date(year, month).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+
+            // Add day names row
+            const dayNames = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+            dayNames.forEach(day => {
+                const dayHeader = document.createElement('div');
+                dayHeader.classList.add('calendar-header-day');
+                dayHeader.textContent = day;
+                calendarGrid.appendChild(dayHeader);
+            });
+
+            const firstDayOfMonth = new Date(year, month, 1).getDay(); // Day of week (0-6)
+            const daysInMonth = new Date(year, month + 1, 0).getDate(); // Last day of month
+
+            // Add empty cells for days before the 1st of the month
+            for (let i = 0; i < firstDayOfMonth; i++) {
+                const emptyCell = document.createElement('div');
+                emptyCell.classList.add('calendar-day-cell', 'inactive');
+                calendarGrid.appendChild(emptyCell);
+            }
+
+            // Add cells for each day of the month
+            for (let day = 1; day <= daysInMonth; day++) {
+                const date = new Date(year, month, day);
+                const dayCell = document.createElement('div');
+                dayCell.classList.add('calendar-day-cell');
+                dayCell.dataset.date = date.toISOString().split('T')[0]; // Store date as YYYY-MM-DD
+
+                const dayNumber = document.createElement('span');
+                dayNumber.classList.add('day-number');
+                dayNumber.textContent = day;
+                dayCell.appendChild(dayNumber);
+
+                // Highlight today's date
+                if (date.toDateString() === new Date().toDateString()) {
+                    dayCell.classList.add('today');
+                }
+
+                // Check for tasks on this day
+                const tasksForDay = getTasksForDate(date);
+                if (tasksForDay.length > 0) {
+                    const taskCountSpan = document.createElement('span');
+                    taskCountSpan.classList.add('task-count');
+                    taskCountSpan.textContent = tasksForDay.length;
+                    dayCell.appendChild(taskCountSpan);
+                    dayCell.classList.add('has-tasks'); // Optional: add class for custom styling if needed
+                }
+
+                dayCell.addEventListener('click', () => openDayTasksModal(date, tasksForDay));
+                calendarGrid.appendChild(dayCell);
+            }
+        }
+
+        // Helper to get tasks for a specific date
+        function getTasksForDate(date) {
+            const tasksOnThisDay = [];
+            const targetDateStr = date.toISOString().split('T')[0]; // YYYY-MM-DD format
+
+            appData.tasks.forEach(task => {
+                if (task.isCompleted) return; // Don't show completed tasks in calendar
+
+                let nextDueDate = null;
+                const lastCompleted = task.lastCompleted ? new Date(task.lastCompleted) : null;
+                const now = new Date(); // Current date for calculations
+
+                // Recalculate next due date for the purpose of this calendar view
+                if (task.frequencyUnit === 'specific_days' && task.daysOfWeek && task.daysOfWeek.length > 0) {
+                    let currentSearchDate = lastCompleted ? new Date(lastCompleted) : new Date(now);
+                    if (lastCompleted) currentSearchDate.setDate(currentSearchDate.getDate() + 1);
+
+                    for (let i = 0; i < 14; i++) { // Search up to 14 days
+                        const dayOfWeek = currentSearchDate.getDay();
+                        if (task.daysOfWeek.includes(String(dayOfWeek))) {
+                            nextDueDate = new Date(currentSearchDate);
+                            break;
+                        }
+                        currentSearchDate.setDate(currentSearchDate.getDate() + 1);
+                    }
+                    if (!nextDueDate && !lastCompleted) { // Fallback for never completed tasks
+                        let tempDate = new Date(now);
+                        for(let i = 0; i < 7; i++) {
+                            const dayToCheck = (tempDate.getDay() + i) % 7;
+                            if (task.daysOfWeek.includes(String(dayToCheck))) {
+                                nextDueDate = new Date(tempDate);
+                                nextDueDate.setDate(tempDate.getDate() + i);
+                                break;
+                            }
+                        }
+                    }
+
+                } else if (lastCompleted) {
+                    nextDueDate = new Date(lastCompleted);
+                    if (task.frequencyUnit === 'days') nextDueDate.setDate(nextDueDate.getDate() + task.frequencyValue);
+                    else if (task.frequencyUnit === 'weeks') nextDueDate.setDate(nextDueDate.getDate() + (task.frequencyValue * 7));
+                    else if (task.frequencyUnit === 'months') nextDueDate.setMonth(nextDueDate.getMonth() + task.frequencyValue);
+                    else if (task.frequencyUnit === 'years') nextDueDate.setFullYear(nextDueDate.getFullYear() + task.frequencyValue);
+                } else {
+                    nextDueDate = now; // If never completed, it's potentially due today
+                }
+
+                if (task.postponeUntilDate) {
+                    const postponeDate = new Date(task.postponeUntilDate);
+                    if (postponeDate > nextDueDate) {
+                        nextDueDate = postponeDate;
                     }
                 }
+
+                // Check if this task is due on the targetDate
+                if (nextDueDate && nextDueDate.toDateString() === date.toDateString()) {
+                    tasksOnThisDay.push(task);
+                }
+            });
+            return tasksOnThisDay;
+        }
+
+        // Open modal to show tasks for a specific day
+        function openDayTasksModal(date, tasks) {
+            const modal = document.getElementById('dayTasksModal');
+            const title = document.getElementById('dayTasksModalTitle');
+            const content = document.getElementById('dayTasksModalContent');
+
+            title.textContent = `Tareas para el ${date.toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })}`;
+            content.innerHTML = ''; // Clear previous content
+
+            if (tasks.length === 0) {
+                content.innerHTML = '<li class="text-center text-gray-500">No hay tareas programadas para este día.</li>';
+            } else {
+                tasks.forEach(task => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `
+                        <p class="font-semibold">${task.name}</p>
+                        <p class="task-due">${task.description || task.category}</p>
+                    `;
+                    content.appendChild(li);
+                });
             }
+            modal.classList.remove('hidden');
+        }
+
+        // Close day tasks modal
+        document.getElementById('closeDayTasksModalBtn').addEventListener('click', () => {
+            document.getElementById('dayTasksModal').classList.add('hidden');
         });
 
 
-        // Event listener para la búsqueda de notas
-        noteSearchInput.addEventListener('input', () => {
-            const searchTerm = noteSearchInput.value.trim();
-            fetchAndRenderNotes(searchTerm);
+        // Calendar navigation buttons
+        document.getElementById('prevMonthBtn').addEventListener('click', () => {
+            currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1);
+            renderCalendar();
         });
 
-        /**
-         * Actualiza la visualización de la fecha actual en el encabezado.
-         */
-        const updateDate = () => {
-            const options = { weekday: 'long', day: 'numeric', month: 'long' };
-            const today = new Date();
-            const formattedDate = today.toLocaleDateString('es-ES', options);
-            dateDisplay.textContent = formattedDate.charAt(0).toUpperCase() + formattedDate.slice(1);
-        };
+        document.getElementById('nextMonthBtn').addEventListener('click', () => {
+            currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1);
+            renderCalendar();
+        });
 
-        // Cuando el DOM esté completamente cargado, inicializar la aplicación
+
+        // --- Progress Functionality ---
+        function renderProgress() {
+            const totalTasksCreatedSpan = document.getElementById('totalTasksCreated');
+            const totalTasksCompletedSpan = document.getElementById('totalTasksCompleted');
+            const completionProgressBar = document.getElementById('completionProgressBar');
+            const motivationalMessageDiv = document.getElementById('motivationalMessage');
+
+            const totalCreated = appData.tasks.length;
+            const totalCompleted = appData.tasks.filter(task => task.isCompleted).length;
+
+            totalTasksCreatedSpan.textContent = totalCreated;
+            totalTasksCompletedSpan.textContent = totalCompleted;
+
+            let completionPercentage = 0;
+            if (totalCreated > 0) {
+                completionPercentage = (totalCompleted / totalCreated) * 100;
+            }
+            completionProgressBar.style.width = `${completionPercentage.toFixed(0)}%`;
+            completionProgressBar.textContent = `${completionPercentage.toFixed(0)}%`;
+
+            // Motivational messages based on percentage
+            if (completionPercentage === 100 && totalCreated > 0) {
+                motivationalMessageDiv.textContent = "¡Increíble! Has completado todas tus tareas. ¡Sigue así, campeón/a del hogar!";
+                motivationalMessageDiv.classList.add('text-green-700');
+                motivationalMessageDiv.classList.remove('text-gray-700');
+            } else if (completionPercentage >= 75) {
+                motivationalMessageDiv.textContent = "¡Excelente progreso! Estás haciendo un trabajo fantástico. ¡Casi lo tienes!";
+                motivationalMessageDiv.classList.add('text-green-600');
+                motivationalMessageDiv.classList.remove('text-gray-700');
+            } else if (completionPercentage >= 50) {
+                motivationalMessageDiv.textContent = "¡Buen trabajo! Has llegado a la mitad del camino. ¡Mantén el ritmo!";
+                motivationalMessageDiv.classList.remove('text-green-700');
+                motivationalMessageDiv.classList.add('text-gray-700');
+            } else if (totalCreated > 0 && completionPercentage < 50) {
+                motivationalMessageDiv.textContent = "¡Cada tarea cuenta! Un pequeño paso hoy es un gran avance mañana. ¡Tú puedes!";
+                motivationalMessageDiv.classList.remove('text-green-700');
+                motivationalMessageDiv.classList.add('text-gray-700');
+            } else {
+                motivationalMessageDiv.textContent = "¡Vamos a empezar a organizar tu hogar! Crea tu primera tarea.";
+                motivationalMessageDiv.classList.remove('text-green-700');
+                motivationalMessageDiv.classList.add('text-gray-700');
+            }
+        }
+
+
+        // Inicialización
         document.addEventListener('DOMContentLoaded', () => {
-            updateDate();
-            // fetchAndRenderTasks('all') y renderDashboardCounts() se llaman después de la autenticación
+            renderAllTasks();
+            renderNotes();
+            // renderCalendar is called when tab is switched to it.
+            // renderProgress is called when tab is switched to it, and also when tasks are completed/deleted.
         });
     </script>
 </body>
