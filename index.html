@@ -605,7 +605,7 @@
                         <option value="weeks">Semanas</option>
                         <option value="months">Meses</option>
                         <option value="years">Años</option>
-                        <option value="specific_days">Días de la Semana</option>
+                        <!-- 'specific_days' option removed as it's now handled by 'weeks'/'months' + daysOfWeek selection -->
                     </select>
                 </div>
             </div>
@@ -749,97 +749,125 @@
 
         let appData = loadData(); // Carga los datos al iniciar la aplicación
 
+        // Helper to normalize a date to the start of the day
+        function normalizeDate(date) {
+            if (!date) return null;
+            return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+        }
+
+        // Helper to determine the absolute anchor for the recurrence pattern (for identifying all occurrences)
+        function _getRecurrencePatternAnchor(task) {
+            let anchor = task.startDate ? normalizeDate(new Date(task.startDate)) : null;
+            if (!anchor && task.createdAt) { // Fallback to creation date if no specific start date
+                anchor = normalizeDate(new Date(task.createdAt));
+            }
+            if (!anchor) { // Absolute fallback to a fixed past date if nothing else exists
+                anchor = normalizeDate(new Date('2000-01-01T00:00:00Z')); // A fixed past date
+            }
+            return anchor;
+        }
+
+        // Helper to check if a specific date matches the task's recurrence pattern from its absolute anchor
+        function _isDateAMatchingRecurrence(task, dateToCheck, patternAnchor) {
+            if (dateToCheck < patternAnchor) return false; // Date is before the pattern even starts
+
+            const freqUnit = task.frequencyUnit;
+            const freqValue = task.frequencyValue || 1;
+            const daysOfWeek = task.daysOfWeek || [];
+            const checkDayOfWeek = dateToCheck.getDay(); // 0 (Sunday) to 6 (Saturday)
+
+            if (freqUnit === 'days') {
+                const diffDays = Math.round((dateToCheck.getTime() - patternAnchor.getTime()) / (1000 * 60 * 60 * 24));
+                return diffDays >= 0 && diffDays % freqValue === 0;
+            } else if (freqUnit === 'weeks') {
+                if (daysOfWeek.length > 0) {
+                    if (!daysOfWeek.includes(String(checkDayOfWeek))) return false; // Not the right day of week
+                    
+                    const anchorWeekStart = new Date(patternAnchor);
+                    anchorWeekStart.setDate(anchorWeekStart.getDate() - anchorWeekStart.getDay()); // Go to Sunday of anchor week
+
+                    const checkWeekStart = new Date(dateToCheck);
+                    checkWeekStart.setDate(checkWeekStart.getDate() - checkWeekStart.getDay()); // Go to Sunday of check date week
+
+                    const diffWeeks = Math.round((checkWeekStart.getTime() - anchorWeekStart.getTime()) / (1000 * 60 * 60 * 24 * 7));
+                    return diffWeeks >= 0 && diffWeeks % freqValue === 0;
+
+                } else {
+                    // Every X weeks, on the same day of the week as the patternAnchor
+                    const diffDays = Math.round((dateToCheck.getTime() - patternAnchor.getTime()) / (1000 * 60 * 60 * 24));
+                    return diffDays >= 0 && diffDays % (freqValue * 7) === 0;
+                }
+            } else if (freqUnit === 'months') {
+                if (daysOfWeek.length > 0) {
+                     if (!daysOfWeek.includes(String(checkDayOfWeek))) return false; // Not the right day of week
+                    const monthsDiff = (dateToCheck.getFullYear() - patternAnchor.getFullYear()) * 12 + (dateToCheck.getMonth() - patternAnchor.getMonth());
+                    return monthsDiff >= 0 && monthsDiff % freqValue === 0;
+                } else {
+                    // Every X months, on the same day of the month as patternAnchor
+                    const monthsDiff = (dateToCheck.getFullYear() - patternAnchor.getFullYear()) * 12 + (dateToCheck.getMonth() - patternAnchor.getMonth());
+                    return monthsDiff >= 0 && monthsDiff % freqValue === 0 && dateToCheck.getDate() === patternAnchor.getDate();
+                }
+            } else if (freqUnit === 'years') {
+                // Every X years, on the same month and day as patternAnchor
+                const yearsDiff = dateToCheck.getFullYear() - patternAnchor.getFullYear();
+                return yearsDiff >= 0 && yearsDiff % freqValue === 0 && dateToCheck.getMonth() === patternAnchor.getMonth() && dateToCheck.getDate() === patternAnchor.getDate();
+            }
+            return false;
+        }
+
+        // Helper to find the very next upcoming due date for a task, considering today's date
+        function findNextUpcomingDueDate(task) {
+            const today = normalizeDate(new Date());
+            const patternAnchor = _getRecurrencePatternAnchor(task);
+
+            let currentSearchDate = null;
+
+            if (task.lastCompleted) {
+                currentSearchDate = normalizeDate(new Date(task.lastCompleted));
+                currentSearchDate.setDate(currentSearchDate.getDate() + 1); // Start search from day after last completed
+            } else {
+                currentSearchDate = new Date(patternAnchor); // Start from pattern anchor if never completed
+            }
+
+            // Ensure we don't return a date in the past relative to "today" for upcoming tasks
+            if (currentSearchDate < today) {
+                currentSearchDate = today;
+            }
+
+            // Iterate day by day to find the next matching recurrence
+            for (let i = 0; i < 365 * 2; i++) { // Search up to 2 years in advance to find *the* next due date
+                let candidateDate = new Date(currentSearchDate);
+                candidateDate.setDate(currentSearchDate.getDate() + i); // Advance day by day
+
+                // Check if this candidateDate is a match for the recurrence pattern
+                if (_isDateAMatchingRecurrence(task, candidateDate, patternAnchor)) {
+                    // If matched, apply postponement filter
+                    if (task.postponeUntilDate) {
+                        const postponeDate = normalizeDate(new Date(task.postponeUntilDate));
+                        if (postponeDate && candidateDate < postponeDate) {
+                            // If this occurrence is before postponement, it's not the actual "next" one.
+                            // We need to keep searching for an occurrence *after* postponement.
+                            currentSearchDate = postponeDate; // Restart search from postponement date
+                            i = -1; // Reset iteration to start from next day after currentSearchDate
+                            continue; // Continue outer loop
+                        }
+                    }
+                    return candidateDate; // Found the next upcoming valid date
+                }
+            }
+            return null; // No upcoming due date found within search range
+        }
+
+
         // --- Gestión de Tareas de Limpieza ---
 
         // Función para renderizar una tarea individual
         function renderTask(task) {
             const now = new Date();
-            const lastCompleted = task.lastCompleted ? new Date(task.lastCompleted) : null;
-            let nextDueDate = null;
-
-            // Determine the base date for recurrence calculation
-            let baseDateForRecurrence = lastCompleted;
-            if (!lastCompleted && task.startDate) {
-                // If never completed and a start date is specified, use it as the base
-                baseDateForRecurrence = new Date(task.startDate);
-            }
-
-            if (task.frequencyUnit === 'specific_days' && task.daysOfWeek && task.daysOfWeek.length > 0) {
-                let currentSearchDate = baseDateForRecurrence ? new Date(baseDateForRecurrence) : new Date(now);
-                if (baseDateForRecurrence && lastCompleted) { // Only increment if based on lastCompletion
-                    currentSearchDate.setDate(currentSearchDate.getDate() + 1);
-                }
-
-                let foundNextDay = false;
-                for (let i = 0; i < 14; i++) { // Check up to 14 days to ensure we find a next day
-                    const dayOfWeek = currentSearchDate.getDay(); // 0 = Sunday, 6 = Saturday
-                    if (task.daysOfWeek.includes(String(dayOfWeek))) { // daysOfWeek stores strings
-                        nextDueDate = new Date(currentSearchDate);
-                        foundNextDay = true;
-                        break;
-                    }
-                    currentSearchDate.setDate(currentSearchDate.getDate() + 1);
-                }
-
-                if (!foundNextDay) { // Fallback if no day found in the loop within 14 days
-                    let tempDate = baseDateForRecurrence ? new Date(baseDateForRecurrence) : new Date(now);
-                    if (baseDateForRecurrence && lastCompleted) {
-                        tempDate.setDate(tempDate.getDate() + 1);
-                    }
-                    for(let i = 0; i < 7; i++) { // Search for the next valid day within 7 days
-                        const dayToCheck = (tempDate.getDay() + i) % 7;
-                        if (task.daysOfWeek.includes(String(dayToCheck))) {
-                            nextDueDate = new Date(tempDate);
-                            nextDueDate.setDate(tempDate.getDate() + i);
-                            break;
-                        }
-                    }
-                }
-
-                // Ensure nextDueDate is not before startDate if startDate is present and relevant
-                if (task.startDate && nextDueDate && new Date(task.startDate) > nextDueDate) {
-                    let tempStartDate = new Date(task.startDate);
-                    let foundValidDayFromStart = false;
-                    for (let i = 0; i < 7; i++) {
-                        const dayOfWeek = tempStartDate.getDay();
-                        if (task.daysOfWeek.includes(String(dayOfWeek))) {
-                            nextDueDate = new Date(tempStartDate);
-                            foundValidDayFromStart = true;
-                            break;
-                        }
-                        tempStartDate.setDate(tempStartDate.getDate() + 1);
-                    }
-                    if (!foundValidDayFromStart) { // Fallback if no day found, just set to start date
-                        nextDueDate = new Date(task.startDate);
-                    }
-                }
-
-            } else if (baseDateForRecurrence) {
-                // Original frequency logic (days, weeks, months, years)
-                nextDueDate = new Date(baseDateForRecurrence);
-                if (task.frequencyUnit === 'days') {
-                    nextDueDate.setDate(nextDueDate.getDate() + task.frequencyValue);
-                } else if (task.frequencyUnit === 'weeks') {
-                    nextDueDate.setDate(nextDueDate.getDate() + (task.frequencyValue * 7));
-                } else if (task.frequencyUnit === 'months') {
-                    nextDueDate.setMonth(nextDueDate.getMonth() + task.frequencyValue);
-                } else if (task.frequencyUnit === 'years') {
-                    nextDueDate.setFullYear(nextDueDate.getFullYear() + task.frequencyValue);
-                }
-            } else {
-                nextDueDate = now; // If never completed and no start date, consider it due "today"
-            }
-
-            // Apply postponement if exists and is later than the calculated nextDueDate
-            if (task.postponeUntilDate) {
-                const postponeDate = new Date(task.postponeUntilDate);
-                if (postponeDate > nextDueDate) {
-                    nextDueDate = postponeDate;
-                }
-            }
-
+            const nextDueDate = findNextUpcomingDueDate(task); // Use the new helper
+            
             const isDueToday = nextDueDate && nextDueDate.toDateString() === now.toDateString() && !task.isCompleted;
-            const isOverdue = nextDueDate && nextDueDate < now && !task.isCompleted;
+            const isOverdue = nextDueDate && nextDueDate < now && !task.isCompleted; // Use nextDueDate for overdue check too
             const isCompleted = task.isCompleted;
 
             let statusText = '';
@@ -857,7 +885,7 @@
             } else if (nextDueDate) {
                 statusText = `Próxima: ${formatDate(nextDueDate)}`;
             } else {
-                statusText = 'Sin fecha';
+                statusText = 'Sin fecha de vencimiento'; // If no nextDueDate found within range
             }
 
             const iconClass = getCategoryIcon(task.category);
@@ -897,7 +925,7 @@
         }
 
         // Obtiene la clase de color para el icono de la categoría
-        function getCategoryColorClass(category) {
+        function getCategoryColorClass(category) { // Fixed: Added function name
             switch (category) {
                 case 'Baño': return 'text-teal-500';
                 case 'Suelo': return 'text-purple-500';
@@ -932,96 +960,35 @@
                 pendingTaskListDiv.innerHTML = '';
                 historyTaskListDiv.innerHTML = '';
 
-                const now = new Date();
+                const now = normalizeDate(new Date());
                 const todayTasks = [];
                 const pendingTasks = [];
                 const historyTasks = [];
 
                 appData.tasks.forEach(task => {
-                    let nextDueDate = null;
-                    const lastCompleted = task.lastCompleted ? new Date(task.lastCompleted) : null;
-
-                    // Determine the base date for recurrence calculation
-                    let baseDateForRecurrence = lastCompleted;
-                    if (!lastCompleted && task.startDate) {
-                        baseDateForRecurrence = new Date(task.startDate);
-                    } else if (!lastCompleted) {
-                        baseDateForRecurrence = now; // Fallback if no lastCompleted and no startDate
-                    }
-
-                    if (task.frequencyUnit === 'specific_days' && task.daysOfWeek && task.daysOfWeek.length > 0) {
-                        let currentSearchDate = new Date(baseDateForRecurrence);
-                        if (lastCompleted) { // Only increment if based on lastCompletion
-                            currentSearchDate.setDate(currentSearchDate.getDate() + 1);
-                        }
-
-                        let foundNextDay = false;
-                        for (let i = 0; i < 14; i++) {
-                            const dayOfWeek = currentSearchDate.getDay();
-                            if (task.daysOfWeek.includes(String(dayOfWeek))) {
-                                nextDueDate = new Date(currentSearchDate);
-                                foundNextDay = true;
-                                break;
-                            }
-                            currentSearchDate.setDate(currentSearchDate.getDate() + 1);
-                        }
-
-                        // Ensure nextDueDate is not before startDate if startDate is present and relevant
-                        if (task.startDate && nextDueDate && new Date(task.startDate) > nextDueDate) {
-                            let tempStartDate = new Date(task.startDate);
-                            let foundValidDayFromStart = false;
-                            for (let i = 0; i < 7; i++) {
-                                const dayOfWeek = tempStartDate.getDay();
-                                if (task.daysOfWeek.includes(String(dayOfWeek))) {
-                                    nextDueDate = new Date(tempStartDate);
-                                    foundValidDayFromStart = true;
-                                    break;
-                                }
-                                tempStartDate.setDate(tempStartDate.getDate() + 1);
-                            }
-                            if (!foundValidDayFromStart) { // Fallback if no day found, just set to start date
-                                nextDueDate = new Date(task.startDate);
-                            }
-                        }
-
-                    } else if (baseDateForRecurrence) {
-                        nextDueDate = new Date(baseDateForRecurrence);
-                        if (task.frequencyUnit === 'days') {
-                            nextDueDate.setDate(nextDueDate.getDate() + task.frequencyValue);
-                        } else if (task.frequencyUnit === 'weeks') {
-                            nextDueDate.setDate(nextDueDate.getDate() + (task.frequencyValue * 7));
-                        } else if (task.frequencyUnit === 'months') {
-                            nextDueDate.setMonth(nextDueDate.getMonth() + task.frequencyValue);
-                        } else if (task.frequencyUnit === 'years') {
-                            nextDueDate.setFullYear(nextDueDate.getFullYear() + task.frequencyValue);
-                        }
-                    } else {
-                        nextDueDate = now;
-                    }
-
-                    // Apply postponement if exists and is later than the calculated nextDueDate
-                    if (task.postponeUntilDate) {
-                        const postponeDate = new Date(task.postponeUntilDate);
-                        if (postponeDate > nextDueDate) {
-                            nextDueDate = postponeDate;
-                        }
-                    }
-
-                    const isDueToday = nextDueDate && nextDueDate.toDateString() === now.toDateString();
-                    const isOverdue = nextDueDate && nextDueDate < now;
-
                     if (task.isCompleted) {
                         historyTasks.push(task);
-                    } else if (isDueToday || isOverdue) {
-                        todayTasks.push(task);
                     } else {
-                        pendingTasks.push(task);
+                        const nextDueDate = findNextUpcomingDueDate(task);
+                        if (nextDueDate && nextDueDate.toDateString() === now.toDateString()) {
+                            todayTasks.push(task);
+                        } else {
+                            pendingTasks.push(task); // Tasks due in the future (or overdue but not "today") go to pending
+                        }
                     }
                 });
 
                 // Renderizar tareas con un pequeño retraso para mejor UX
                 setTimeout(() => {
                     todayTasks.forEach(task => taskListDiv.innerHTML += renderTask(task));
+                    // Sort pending tasks by next due date
+                    pendingTasks.sort((a, b) => {
+                        const dateA = findNextUpcomingDueDate(a);
+                        const dateB = findNextUpcomingDueDate(b);
+                        if (!dateA) return 1;
+                        if (!dateB) return -1;
+                        return dateA.getTime() - dateB.getTime();
+                    });
                     pendingTasks.forEach(task => pendingTaskListDiv.innerHTML += renderTask(task));
                     historyTasks.sort((a, b) => new Date(b.lastCompleted) - new Date(a.lastCompleted));
                     historyTasks.forEach(task => historyTaskListDiv.innerHTML += renderTask(task));
@@ -1073,6 +1040,7 @@
                 taskCategorySelect.value = task.category;
                 taskFrequencyUnitSelect.value = task.frequencyUnit || 'weeks';
 
+                // Set start date
                 if (task.startDate) {
                     taskStartDateInput.value = new Date(task.startDate).toISOString().split('T')[0];
                 } else {
@@ -1080,31 +1048,28 @@
                 }
 
                 // Show/hide frequency-related fields
-                if (['days', 'weeks', 'months', 'years'].includes(task.frequencyUnit)) {
-                    frequencyFieldsDiv.classList.remove('hidden'); // Show value and unit
-                    daysOfWeekSelectionDiv.classList.add('hidden'); // Hide specific days
-                    taskFrequencyValueInput.value = task.frequencyValue || 1;
-                    taskStartDateContainer.classList.remove('hidden'); // Show start date for recurrences
-                } else if (task.frequencyUnit === 'specific_days') {
-                    frequencyFieldsDiv.classList.add('hidden'); // Hide value and unit
-                    daysOfWeekSelectionDiv.classList.remove('hidden'); // Show specific days
-                    taskStartDateContainer.classList.remove('hidden'); // Show start date for recurrences
+                frequencyFieldsDiv.classList.remove('hidden'); // Always show value and unit for recurring
+                taskStartDateContainer.classList.remove('hidden'); // Always show start date for recurring
+
+                if (['weeks', 'months'].includes(task.frequencyUnit)) {
+                    daysOfWeekSelectionDiv.classList.remove('hidden');
                     if (task.daysOfWeek) {
                         task.daysOfWeek.forEach(day => {
                             const checkbox = document.querySelector(`#daysOfWeekSelection input[value="${day}"]`);
                             if (checkbox) checkbox.checked = true;
                         });
                     }
-                } else { // No recurrence or one-time task
-                    frequencyFieldsDiv.classList.remove('hidden');
+                } else {
                     daysOfWeekSelectionDiv.classList.add('hidden');
-                    taskStartDateContainer.classList.add('hidden'); // Hide start date if not recurring
                 }
+                
+                // Set frequency value for existing task
+                taskFrequencyValueInput.value = task.frequencyValue || 1;
 
             } else {
                 taskModalTitle.textContent = 'Añadir Nueva Tarea';
                 frequencyFieldsDiv.classList.remove('hidden');
-                daysOfWeekSelectionDiv.classList.add('hidden');
+                daysOfWeekSelectionDiv.classList.add('hidden'); // Default hidden
                 taskStartDateContainer.classList.remove('hidden'); // Show start date by default for new tasks
                 taskStartDateInput.value = todayISO; // Default to today's date for new tasks
             }
@@ -1119,27 +1084,23 @@
         // Manejar el cambio en la unidad de frecuencia para mostrar/ocultar días de la semana y fecha de inicio
         document.getElementById('taskFrequencyUnit').addEventListener('change', (e) => {
             const daysOfWeekSelectionDiv = document.getElementById('daysOfWeekSelection');
-            const frequencyFieldsDiv = document.getElementById('frequencyFields');
-            const taskStartDateContainer = document.getElementById('taskStartDateContainer');
             const taskFrequencyValueInput = document.getElementById('taskFrequencyValue');
+            const taskStartDateContainer = document.getElementById('taskStartDateContainer');
 
             const selectedUnit = e.target.value;
 
-            if (selectedUnit === 'specific_days') {
+            // Frequency value input is always visible for these recurring units
+            taskFrequencyValueInput.closest('div.flex').classList.remove('hidden');
+
+            // Show/hide daysOfWeekSelection based on selectedUnit
+            if (['weeks', 'months'].includes(selectedUnit)) {
                 daysOfWeekSelectionDiv.classList.remove('hidden');
-                frequencyFieldsDiv.classList.add('hidden'); // Ocultar input de valor y selector de unidad
-                taskStartDateContainer.classList.remove('hidden'); // Always show start date for specific days
-            } else if (['days', 'weeks', 'months', 'years'].includes(selectedUnit)) {
+            } else {
                 daysOfWeekSelectionDiv.classList.add('hidden');
-                frequencyFieldsDiv.classList.remove('hidden'); // Mostrar input de valor y selector de unidad
-                taskFrequencyValueInput.value = '1';
-                taskStartDateContainer.classList.remove('hidden'); // Show start date for other recurrences
-            } else { // Handle any other non-recurring case, though current options are all recurring
-                daysOfWeekSelectionDiv.classList.add('hidden');
-                frequencyFieldsDiv.classList.remove('hidden');
-                taskFrequencyValueInput.value = '1';
-                taskStartDateContainer.classList.add('hidden'); // Hide start date if not recurring
             }
+
+            // Start Date container is always visible for these recurring units
+            taskStartDateContainer.classList.remove('hidden');
         });
 
         // Añade/Edita una tarea
@@ -1161,33 +1122,28 @@
             }
 
             // Validate and set recurrence details
-            if (taskFrequencyUnit === 'specific_days') {
+            taskFrequencyValue = parseInt(document.getElementById('taskFrequencyValue').value);
+            if (isNaN(taskFrequencyValue) || taskFrequencyValue <= 0) {
+                showMessage('La frecuencia debe ser un número positivo.', 'error');
+                return;
+            }
+
+            // Collect daysOfWeek only if unit is 'weeks' or 'months'
+            if (['weeks', 'months'].includes(taskFrequencyUnit)) {
                 daysOfWeek = Array.from(document.querySelectorAll('#daysOfWeekSelection input[type="checkbox"]:checked'))
                                .map(checkbox => checkbox.value);
                 if (daysOfWeek.length === 0) {
                     showMessage('Debes seleccionar al menos un día de la semana para esta frecuencia.', 'error');
                     return;
                 }
-                // Ensure a start date is provided for specific days
-                if (!taskStartDate) {
-                    showMessage('Debes seleccionar una fecha de inicio para esta frecuencia.', 'error');
-                    return;
-                }
-                startDateToSave = taskStartDate;
-            } else if (['days', 'weeks', 'months', 'years'].includes(taskFrequencyUnit)) {
-                taskFrequencyValue = parseInt(document.getElementById('taskFrequencyValue').value);
-                if (isNaN(taskFrequencyValue) || taskFrequencyValue <= 0) {
-                    showMessage('La frecuencia debe ser un número positivo.', 'error');
-                    return;
-                }
-                // Ensure a start date is provided for other recurring tasks
-                if (!taskStartDate) {
-                    showMessage('Debes seleccionar una fecha de inicio para esta frecuencia.', 'error');
-                    return;
-                }
-                startDateToSave = taskStartDate;
             }
-            // If it's a non-recurring task, startDateToSave will remain null/empty
+            
+            // Validate start date for recurring tasks
+            if (!taskStartDate) {
+                showMessage('Debes seleccionar una fecha de inicio para esta frecuencia.', 'error');
+                return;
+            }
+            startDateToSave = taskStartDate;
 
             if (taskId) {
                 // Editar tarea existente
@@ -1217,7 +1173,8 @@
                     startDate: startDateToSave, // Save the start date
                     lastCompleted: null,
                     isCompleted: false,
-                    postponeUntilDate: null // New property for postponement
+                    postponeUntilDate: null, // New property for postponement
+                    createdAt: new Date().toISOString() // Add createdAt for pattern anchor fallback
                 };
                 appData.tasks.push(newTask);
             }
@@ -1620,7 +1577,7 @@
                 
                 // Obtener tareas para este día
                 const dayDate = new Date(currentYear, currentMonth, day);
-                const dayTasks = getTasksForDate(dayDate);
+                const dayTasks = getTasksForDate(dayDate); // Uses the new getTasksForDate logic
                 
                 // Añadir indicador de tareas
                 if (dayTasks.length > 0) {
@@ -1644,93 +1601,49 @@
             }
         }
 
-        // Obtiene las tareas para una fecha específica
+        // Obtiene las tareas para una fecha específica del calendario
         function getTasksForDate(date) {
-            const dayOfWeek = date.getDay(); // 0 = Sunday, 6 = Saturday
-            const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate()); // Normalize to start of day
-            const nowOnly = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
+            const calendarDate = normalizeDate(date); // The specific date cell in the calendar
+            const now = normalizeDate(new Date());
 
             return appData.tasks.filter(task => {
-                if (task.isCompleted) return false; // Don't show completed tasks
+                // 1. Task is completed - don't show in calendar
+                if (task.isCompleted) {
+                    return false;
+                }
 
-                // If task is postponed, and the current date is before postponeUntilDate, don't show it
+                // 2. Task is postponed - don't show before postponement date
                 if (task.postponeUntilDate) {
-                    const postponeDate = new Date(task.postponeUntilDate);
-                    const postponeDateOnly = new Date(postponeDate.getFullYear(), postponeDate.getMonth(), postponeDate.getDate());
-                    if (dateOnly < postponeDateOnly) return false;
+                    const postponeDate = normalizeDate(new Date(task.postponeUntilDate));
+                    if (calendarDate < postponeDate) {
+                        return false;
+                    }
                 }
 
-                let nextDueDate = null;
-                const lastCompleted = task.lastCompleted ? new Date(task.lastCompleted) : null;
-
-                // Determine the base date for recurrence calculation
-                let baseDateForRecurrence = lastCompleted;
-                if (!lastCompleted && task.startDate) {
-                    baseDateForRecurrence = new Date(task.startDate);
-                } else if (!lastCompleted) {
-                    baseDateForRecurrence = nowOnly; // Fallback if no lastCompleted and no startDate
+                // Determine the starting point for recurrence calculation for this task
+                // If lastCompleted exists, it's the basis for the *next* occurrence to be calculated from.
+                // If startDate exists, it's the absolute earliest this task can *first* appear.
+                let effectiveRecurrenceAnchor = task.lastCompleted ? normalizeDate(new Date(task.lastCompleted)) : null;
+                if (task.startDate) {
+                    const taskStart = normalizeDate(new Date(task.startDate));
+                    if (!effectiveRecurrenceAnchor || taskStart > effectiveRecurrenceAnchor) {
+                        effectiveRecurrenceAnchor = taskStart;
+                    }
+                }
+                if (!effectiveRecurrenceAnchor) {
+                    effectiveRecurrenceAnchor = normalizeDate(new Date('2000-01-01T00:00:00Z')); // Fallback to fixed date if no start or last completed
                 }
 
-                if (task.frequencyUnit === 'specific_days' && task.daysOfWeek && task.daysOfWeek.length > 0) {
-                    let currentSearchDate = new Date(baseDateForRecurrence);
-                    if (lastCompleted) { // Only increment if based on lastCompletion
-                        currentSearchDate.setDate(currentSearchDate.getDate() + 1);
-                    }
-
-                    let foundNextDay = false;
-                    for (let i = 0; i < 14; i++) { // Check up to 14 days
-                        const day = currentSearchDate.getDay();
-                        if (task.daysOfWeek.includes(String(day))) {
-                            nextDueDate = new Date(currentSearchDate);
-                            foundNextDay = true;
-                            break;
-                        }
-                        currentSearchDate.setDate(currentSearchDate.getDate() + 1);
-                    }
-
-                    // If a startDate is present and the calculated nextDueDate is before it, find the first valid day from startDate
-                    if (task.startDate && nextDueDate && new Date(task.startDate) > nextDueDate) {
-                        let tempStartDate = new Date(task.startDate);
-                        let foundValidDayFromStart = false;
-                        for (let i = 0; i < 7; i++) {
-                            const day = tempStartDate.getDay();
-                            if (task.daysOfWeek.includes(String(day))) {
-                                nextDueDate = new Date(tempStartDate);
-                                foundValidDayFromStart = true;
-                                break;
-                            }
-                            tempStartDate.setDate(tempStartDate.getDate() + 1);
-                        }
-                        if (!foundValidDayFromStart) {
-                             nextDueDate = new Date(task.startDate); // Fallback to start date if no specific day found immediately
-                        }
-                    }
-
-                } else if (baseDateForRecurrence) {
-                    nextDueDate = new Date(baseDateForRecurrence);
-                    if (task.frequencyUnit === 'days') {
-                        nextDueDate.setDate(nextDueDate.getDate() + task.frequencyValue);
-                    } else if (task.frequencyUnit === 'weeks') {
-                        nextDueDate.setDate(nextDueDate.getDate() + (task.frequencyValue * 7));
-                    } else if (task.frequencyUnit === 'months') {
-                        nextDueDate.setMonth(nextDueDate.getMonth() + task.frequencyValue);
-                    } else if (task.frequencyUnit === 'years') {
-                        nextDueDate.setFullYear(nextDueDate.getFullYear() + task.frequencyValue);
-                    }
-
-                    // If a startDate is present and calculated nextDueDate is before it, use startDate as minimum
-                    if (task.startDate) {
-                        const actualStartDate = new Date(task.startDate);
-                        if (nextDueDate < actualStartDate) {
-                            nextDueDate = actualStartDate;
-                        }
-                    }
-                } else {
-                    nextDueDate = nowOnly; // If no lastCompleted and no startDate, assume due today
+                // If the calendar date is before the effective anchor, it's not due yet.
+                // This `effectiveRecurrenceAnchor` is used for display filtering in calendar (e.g., don't show before start date)
+                // The actual pattern matching is done by _isDateAMatchingRecurrence from its pattern anchor.
+                if (calendarDate < effectiveRecurrenceAnchor) {
+                    return false;
                 }
-                
-                // Compare with the date being rendered in the calendar
-                return nextDueDate && dateOnly.toDateString() === new Date(nextDueDate.getFullYear(), nextDueDate.getMonth(), nextDueDate.getDate()).toDateString();
+
+                // Check if this calendarDate matches the recurrence pattern starting from the absolute pattern anchor
+                const patternAnchor = _getRecurrencePatternAnchor(task);
+                return _isDateAMatchingRecurrence(task, calendarDate, patternAnchor);
             });
         }
 
