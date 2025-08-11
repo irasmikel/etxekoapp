@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Mi Control del Hogar">
     <title>Mi Control del Hogar</title>
     <!-- Incluye Tailwind CSS para un estilo rápido y responsivo -->
@@ -713,8 +713,26 @@
         <i class="fas fa-plus text-xl"></i>
     </button>
 
-    <script>
-        // Funciones de utilidad para manejar el almacenamiento local
+    <script type="module">
+        // Importa las funciones necesarias de Firebase SDKs
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Firebase variables
+        let app;
+        let db;
+        let auth;
+        let userId; // Almacenará el ID del usuario actual
+        let isAuthReady = false; // Flag para asegurar que las operaciones de Firestore se realizan después de la autenticación
+
+        // Contiene los datos de la aplicación (tareas y notas)
+        let appData = {
+            tasks: [],
+            notes: []
+        };
+
+        // Funciones de utilidad para manejar el almacenamiento local (ahora reemplazadas por Firestore, pero mantenidas para la estructura de appData)
         const storageKey = 'houseControlApp'; // Clave principal para localStorage
         const appMessageDiv = document.getElementById('appMessage');
         let messageTimeout;
@@ -733,23 +751,7 @@
             }, duration);
         }
 
-        // Carga los datos de localStorage
-        function loadData() {
-            const data = localStorage.getItem(storageKey);
-            return data ? JSON.parse(data) : {
-                tasks: [],
-                notes: [] // Ahora unificado
-            };
-        }
-
-        // Guarda los datos en localStorage
-        function saveData(data) {
-            localStorage.setItem(storageKey, JSON.stringify(data));
-        }
-
-        let appData = loadData(); // Carga los datos al iniciar la aplicación
-
-        // Helper to normalize a date to the start of the day
+        // Helper to normalize a date to the start of the day (YYYY-MM-DD)
         function normalizeDate(date) {
             if (!date) return null;
             return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -769,7 +771,7 @@
 
         // Helper to check if a specific date matches the task's recurrence pattern from its absolute anchor
         function _isDateAMatchingRecurrence(task, dateToCheck, patternAnchor) {
-            if (dateToCheck < patternAnchor) return false; // Date is before the pattern even starts
+            if (!patternAnchor || dateToCheck < patternAnchor) return false; // Date is before the pattern even starts
 
             const freqUnit = task.frequencyUnit;
             const freqValue = task.frequencyValue || 1;
@@ -925,7 +927,7 @@
         }
 
         // Obtiene la clase de color para el icono de la categoría
-        function getCategoryColorClass(category) { // Fixed: Added function name
+        function getCategoryColorClass(category) { 
             switch (category) {
                 case 'Baño': return 'text-teal-500';
                 case 'Suelo': return 'text-purple-500';
@@ -1104,7 +1106,7 @@
         });
 
         // Añade/Edita una tarea
-        document.getElementById('saveTaskBtn').addEventListener('click', () => {
+        document.getElementById('saveTaskBtn').addEventListener('click', async () => {
             const taskId = document.getElementById('taskId').value;
             const taskName = document.getElementById('taskName').value.trim();
             const taskDescription = document.getElementById('taskDescription').value.trim();
@@ -1118,6 +1120,11 @@
 
             if (!taskName) {
                 showMessage('El nombre de la tarea no puede estar vacío.', 'error');
+                return;
+            }
+
+            if (!isAuthReady || !userId) {
+                showMessage('No se pudo guardar la tarea. Autenticación no lista.', 'error');
                 return;
             }
 
@@ -1145,12 +1152,11 @@
             }
             startDateToSave = taskStartDate;
 
-            if (taskId) {
-                // Editar tarea existente
-                const taskIndex = appData.tasks.findIndex(t => t.id === taskId);
-                if (taskIndex > -1) {
-                    appData.tasks[taskIndex] = {
-                        ...appData.tasks[taskIndex],
+            try {
+                if (taskId) {
+                    // Editar tarea existente
+                    const taskRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, taskId);
+                    await updateDoc(taskRef, {
                         name: taskName,
                         description: taskDescription,
                         category: taskCategory,
@@ -1158,30 +1164,31 @@
                         frequencyUnit: taskFrequencyUnit,
                         daysOfWeek: daysOfWeek.length > 0 ? daysOfWeek : null, // Store null if no specific days
                         startDate: startDateToSave // Save the start date
-                    };
+                    });
+                } else {
+                    // Añadir nueva tarea
+                    const tasksCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/tasks`);
+                    await addDoc(tasksCollectionRef, {
+                        name: taskName,
+                        description: taskDescription,
+                        category: taskCategory,
+                        frequencyValue: taskFrequencyValue,
+                        frequencyUnit: taskFrequencyUnit,
+                        daysOfWeek: daysOfWeek.length > 0 ? daysOfWeek : null,
+                        startDate: startDateToSave, // Save the start date
+                        lastCompleted: null,
+                        isCompleted: false,
+                        postponeUntilDate: null, // New property for postponement
+                        createdAt: new Date().toISOString() // Add createdAt for pattern anchor fallback
+                    });
                 }
-            } else {
-                // Añadir nueva tarea
-                const newTask = {
-                    id: crypto.randomUUID(),
-                    name: taskName,
-                    description: taskDescription,
-                    category: taskCategory,
-                    frequencyValue: taskFrequencyValue,
-                    frequencyUnit: taskFrequencyUnit,
-                    daysOfWeek: daysOfWeek.length > 0 ? daysOfWeek : null,
-                    startDate: startDateToSave, // Save the start date
-                    lastCompleted: null,
-                    isCompleted: false,
-                    postponeUntilDate: null, // New property for postponement
-                    createdAt: new Date().toISOString() // Add createdAt for pattern anchor fallback
-                };
-                appData.tasks.push(newTask);
+                showMessage('Tarea guardada con éxito.', 'success');
+            } catch (error) {
+                console.error("Error saving task to Firestore:", error);
+                showMessage('Error al guardar la tarea.', 'error');
+            } finally {
+                closeTaskModal();
             }
-            saveData(appData);
-            renderAllTasks();
-            closeTaskModal();
-            showMessage('Tarea guardada con éxito.', 'success');
         });
 
         // Event listener para el botón "Añadir tarea"
@@ -1191,35 +1198,46 @@
         // Añadir event listeners a los botones de las tarjetas de tareas
         function addEventListenersToTaskButtons() {
             document.querySelectorAll('.complete-btn').forEach(button => {
-                button.onclick = (e) => {
+                button.onclick = async (e) => { // Made async
                     e.stopPropagation();
                     const taskId = e.target.closest('.task-card').dataset.id;
-                    const taskIndex = appData.tasks.findIndex(t => t.id === taskId);
-                    if (taskIndex > -1) {
-                        appData.tasks[taskIndex].lastCompleted = new Date().toISOString();
-                        appData.tasks[taskIndex].isCompleted = true;
-                        appData.tasks[taskIndex].postponeUntilDate = null; // Clear postponement on completion
-                        saveData(appData);
-                        renderAllTasks();
+                    if (!isAuthReady || !userId) {
+                        showMessage('No se pudo completar la tarea. Autenticación no lista.', 'error');
+                        return;
+                    }
+                    try {
+                        const taskRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, taskId);
+                        await updateDoc(taskRef, {
+                            lastCompleted: new Date().toISOString(),
+                            isCompleted: true,
+                            postponeUntilDate: null
+                        });
                         showMessage('Tarea marcada como completada.', 'success');
-                        renderProgress(); // Update progress after completing a task
+                    } catch (error) {
+                        console.error("Error completing task in Firestore:", error);
+                        showMessage('Error al completar la tarea.', 'error');
                     }
                 };
             });
 
             document.querySelectorAll('.postpone-btn').forEach(button => {
-                button.onclick = (e) => {
+                button.onclick = async (e) => { // Made async
                     e.stopPropagation();
                     const taskId = e.target.closest('.task-card').dataset.id;
-                    const taskIndex = appData.tasks.findIndex(t => t.id === taskId);
-                    if (taskIndex > -1) {
+                    if (!isAuthReady || !userId) {
+                        showMessage('No se pudo posponer la tarea. Autenticación no lista.', 'error');
+                        return;
+                    }
+                    try {
                         const now = new Date();
                         // Postpone by 1 day from now
                         const postponeDate = new Date(now.getTime() + (24 * 60 * 60 * 1000));
-                        appData.tasks[taskIndex].postponeUntilDate = postponeDate.toISOString();
-                        saveData(appData);
-                        renderAllTasks();
+                        const taskRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, taskId);
+                        await updateDoc(taskRef, { postponeUntilDate: postponeDate.toISOString() });
                         showMessage('Tarea pospuesta por 1 día.', 'success');
+                    } catch (error) {
+                        console.error("Error postponing task in Firestore:", error);
+                        showMessage('Error al posponer la tarea.', 'error');
                     }
                 };
             });
@@ -1239,12 +1257,19 @@
                 button.onclick = (e) => {
                     e.stopPropagation();
                     const taskId = e.target.closest('.task-card').dataset.id;
-                    showConfirmModal('¿Estás seguro de que quieres eliminar esta tarea?', () => {
-                        appData.tasks = appData.tasks.filter(t => t.id !== taskId);
-                        saveData(appData);
-                        renderAllTasks();
-                        showMessage('Tarea eliminada.', 'success');
-                        renderProgress(); // Update progress after deleting a task
+                    showConfirmModal('¿Estás seguro de que quieres eliminar esta tarea?', async () => { // Made confirm callback async
+                        if (!isAuthReady || !userId) {
+                            showMessage('No se pudo eliminar la tarea. Autenticación no lista.', 'error');
+                            return;
+                        }
+                        try {
+                            const taskRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, taskId);
+                            await deleteDoc(taskRef);
+                            showMessage('Tarea eliminada.', 'success');
+                        } catch (error) {
+                            console.error("Error deleting task from Firestore:", error);
+                            showMessage('Error al eliminar la tarea.', 'error');
+                        }
                     });
                 };
             });
@@ -1383,7 +1408,7 @@
         }
 
         // Añade/Edita una nota
-        document.getElementById('saveNoteBtn').addEventListener('click', () => {
+        document.getElementById('saveNoteBtn').addEventListener('click', async () => {
             const noteId = document.getElementById('noteId').value;
             const noteTitle = document.getElementById('noteTitle').value.trim();
             const noteContent = document.getElementById('noteContent').value.trim();
@@ -1395,83 +1420,73 @@
                 return;
             }
 
-            if (noteId) {
-                // Editar nota existente
-                const noteIndex = appData.notes.findIndex(n => n.id === noteId);
-                if (noteIndex > -1) {
-                    appData.notes[noteIndex] = {
-                        ...appData.notes[noteIndex],
+            if (!isAuthReady || !userId) {
+                showMessage('No se pudo guardar la nota. Autenticación no lista.', 'error');
+                return;
+            }
+
+            try {
+                if (noteId) {
+                    // Editar nota existente
+                    const noteRef = doc(db, `artifacts/${appId}/users/${userId}/notes`, noteId);
+                    const updateData = {
                         title: noteTitle,
                         content: noteContent
                     };
-                    
-                    // Si se adjunta un nuevo archivo
+
                     if (noteFileInput.files.length > 0) {
                         const file = noteFileInput.files[0];
                         const reader = new FileReader();
-                        
-                        reader.onload = function(e) {
-                            appData.notes[noteIndex].fileAttached = e.target.result;
-                            appData.notes[noteIndex].fileName = file.name;
-                            appData.notes[noteIndex].fileType = file.type;
-                            saveData(appData);
-                            renderAllNotes();
-                            closeNoteModal();
+                        reader.onload = async function(e) {
+                            updateData.fileAttached = e.target.result;
+                            updateData.fileName = file.name;
+                            updateData.fileType = file.type;
+                            await updateDoc(noteRef, updateData);
                             showMessage('Nota actualizada con éxito.', 'success');
                         };
-                        
                         reader.readAsDataURL(file);
                     } else {
                         // Si no se adjunta un nuevo archivo pero se eliminó el existente
                         if (currentAttachedFileDiv.classList.contains('hidden')) {
-                            appData.notes[noteIndex].fileAttached = null;
-                            appData.notes[noteIndex].fileName = null;
-                            appData.notes[noteIndex].fileType = null;
+                            updateData.fileAttached = null;
+                            updateData.fileName = null;
+                            updateData.fileType = null;
                         }
-                        
-                        saveData(appData);
-                        renderAllNotes();
-                        closeNoteModal();
+                        await updateDoc(noteRef, updateData);
                         showMessage('Nota actualizada con éxito.', 'success');
                     }
-                }
-            } else {
-                // Añadir nueva nota
-                const newNote = {
-                    id: crypto.randomUUID(),
-                    title: noteTitle,
-                    content: noteContent,
-                    fileAttached: null,
-                    fileName: null,
-                    fileType: null,
-                    createdAt: new Date().toISOString()
-                };
-                
-                // Si se adjunta un archivo
-                if (noteFileInput.files.length > 0) {
-                    const file = noteFileInput.files[0];
-                    const reader = new FileReader();
-                    
-                    reader.onload = function(e) {
-                        newNote.fileAttached = e.target.result;
-                        newNote.fileName = file.name;
-                        newNote.fileType = file.type;
-                        
-                        appData.notes.push(newNote);
-                        saveData(appData);
-                        renderAllNotes();
-                        closeNoteModal();
-                        showMessage('Nota guardada con éxito.', 'success');
-                    };
-                    
-                    reader.readAsDataURL(file);
                 } else {
-                    appData.notes.push(newNote);
-                    saveData(appData);
-                    renderAllNotes();
-                    closeNoteModal();
-                    showMessage('Nota guardada con éxito.', 'success');
+                    const notesCollectionRef = collection(db, `artifacts/${appId}/users/${userId}/notes`);
+                    const newNoteData = {
+                        title: noteTitle,
+                        content: noteContent,
+                        fileAttached: null,
+                        fileName: null,
+                        fileType: null,
+                        createdAt: new Date().toISOString()
+                    };
+
+                    if (noteFileInput.files.length > 0) {
+                        const file = noteFileInput.files[0];
+                        const reader = new FileReader();
+                        reader.onload = async function(e) {
+                            newNoteData.fileAttached = e.target.result;
+                            newNoteData.fileName = file.name;
+                            newNoteData.fileType = file.type;
+                            await addDoc(notesCollectionRef, newNoteData);
+                            showMessage('Nota guardada con éxito.', 'success');
+                        };
+                        reader.readAsDataURL(file);
+                    } else {
+                        await addDoc(notesCollectionRef, newNoteData);
+                        showMessage('Nota guardada con éxito.', 'success');
+                    }
                 }
+            } catch (error) {
+                console.error("Error saving note to Firestore:", error);
+                showMessage('Error al guardar la nota.', 'error');
+            } finally {
+                closeNoteModal();
             }
         });
 
@@ -1501,11 +1516,19 @@
                 button.onclick = (e) => {
                     e.stopPropagation();
                     const noteId = e.target.closest('.note-card').dataset.id;
-                    showConfirmModal('¿Estás seguro de que quieres eliminar esta nota?', () => {
-                        appData.notes = appData.notes.filter(n => n.id !== noteId);
-                        saveData(appData);
-                        renderAllNotes();
-                        showMessage('Nota eliminada.', 'success');
+                    showConfirmModal('¿Estás seguro de que quieres eliminar esta nota?', async () => { // Made confirm callback async
+                        if (!isAuthReady || !userId) {
+                            showMessage('No se pudo eliminar la nota. Autenticación no lista.', 'error');
+                            return;
+                        }
+                        try {
+                            const noteRef = doc(db, `artifacts/${appId}/users/${userId}/notes`, noteId);
+                            await deleteDoc(noteRef);
+                            showMessage('Nota eliminada.', 'success');
+                        } catch (error) {
+                            console.error("Error deleting note from Firestore:", error);
+                            showMessage('Error al eliminar la nota.', 'error');
+                        }
                     });
                 };
             });
@@ -1691,36 +1714,45 @@
                 
                 // Añadir event listeners a los botones de completar y posponer
                 document.querySelectorAll('#dayTasksModalContent .complete-btn').forEach(button => {
-                    button.addEventListener('click', (e) => {
+                    button.addEventListener('click', async (e) => { // Made async
                         const taskId = e.currentTarget.dataset.taskId;
-                        const taskIndex = appData.tasks.findIndex(t => t.id === taskId);
-                        if (taskIndex > -1) {
-                            appData.tasks[taskIndex].lastCompleted = new Date().toISOString();
-                            appData.tasks[taskIndex].isCompleted = true;
-                            appData.tasks[taskIndex].postponeUntilDate = null;
-                            saveData(appData);
-                            renderCalendar();
-                            renderAllTasks();
-                            dayTasksModal.classList.add('hidden');
+                        if (!isAuthReady || !userId) {
+                            showMessage('No se pudo completar la tarea. Autenticación no lista.', 'error');
+                            return;
+                        }
+                        try {
+                            const taskRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, taskId);
+                            await updateDoc(taskRef, {
+                                lastCompleted: new Date().toISOString(),
+                                isCompleted: true,
+                                postponeUntilDate: null
+                            });
                             showMessage('Tarea marcada como completada.', 'success');
-                            renderProgress();
+                            dayTasksModal.classList.add('hidden'); // Close modal after action
+                        } catch (error) {
+                            console.error("Error completing task in Firestore:", error);
+                            showMessage('Error al completar la tarea.', 'error');
                         }
                     });
                 });
                 
                 document.querySelectorAll('#dayTasksModalContent .postpone-btn').forEach(button => {
-                    button.addEventListener('click', (e) => {
+                    button.addEventListener('click', async (e) => { // Made async
                         const taskId = e.currentTarget.dataset.taskId;
-                        const taskIndex = appData.tasks.findIndex(t => t.id === taskId);
-                        if (taskIndex > -1) {
+                        if (!isAuthReady || !userId) {
+                            showMessage('No se pudo posponer la tarea. Autenticación no lista.', 'error');
+                            return;
+                        }
+                        try {
                             const now = new Date();
                             const postponeDate = new Date(now.getTime() + (24 * 60 * 60 * 1000));
-                            appData.tasks[taskIndex].postponeUntilDate = postponeDate.toISOString();
-                            saveData(appData);
-                            renderCalendar();
-                            renderAllTasks();
-                            dayTasksModal.classList.add('hidden');
+                            const taskRef = doc(db, `artifacts/${appId}/users/${userId}/tasks`, taskId);
+                            await updateDoc(taskRef, { postponeUntilDate: postponeDate.toISOString() });
                             showMessage('Tarea pospuesta por 1 día.', 'success');
+                            dayTasksModal.classList.add('hidden'); // Close modal after action
+                        } catch (error) {
+                            console.error("Error postponing task in Firestore:", error);
+                            showMessage('Error al posponer la tarea.', 'error');
                         }
                     });
                 });
@@ -1953,7 +1985,51 @@
 
         // Inicializar la aplicación cuando el DOM esté cargado
         document.addEventListener('DOMContentLoaded', () => {
-            // Renderizar tareas y notas iniciales
+            // Initialize Firebase
+            const firebaseConfig = {
+                apiKey: "AIzaSyApVxmFp3bcogwMqaz0MQiIng6XzGwhTvY",
+                authDomain: "etxekoapp.firebaseapp.com",
+                projectId: "etxekoapp",
+                storageBucket: "etxekoapp.firebasestorage.app",
+                messagingSenderId: "1031385135784",
+                appId: "1:1031385135784:web:1018c0dadb87769495209d"
+            };
+            
+            const appIdEnv = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // Use __app_id from environment
+            const firebaseConfigEnv = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig; // Use __firebase_config from environment
+
+            app = initializeApp(firebaseConfigEnv);
+            db = getFirestore(app);
+            auth = getAuth(app);
+
+            // Authenticate user
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    userId = user.uid;
+                    console.log("Authenticated as:", userId);
+                } else {
+                    try {
+                        const authResult = typeof __initial_auth_token !== 'undefined'
+                            ? await signInWithCustomToken(auth, __initial_auth_token)
+                            : await signInAnonymously(auth);
+                        userId = authResult.user.uid;
+                        console.log("Authenticated anonymously as:", userId);
+                    } catch (error) {
+                        console.error("Firebase authentication error:", error);
+                        showMessage("Error al autenticar. Algunas funciones podrían no estar disponibles.", 'error');
+                        // Fallback to a random ID if auth fails, but data won't persist across sessions if anonymous auth is required
+                        userId = crypto.randomUUID(); // Fallback for testing/dev environments
+                    }
+                }
+                isAuthReady = true;
+                // Now that auth is ready, load data from Firestore
+                loadDataFromFirestore(appIdEnv); // Pass appId to the load function
+            });
+            
+            // Add app ID to the global scope for use in Firestore paths
+            window.appId = appIdEnv;
+
+            // Renderizar tareas y notas iniciales (serán actualizadas por los listeners de Firestore)
             renderAllTasks();
             renderAllNotes();
             renderProgress();
@@ -1981,6 +2057,37 @@
                     });
             }
         });
+
+        // New function to load data from Firestore with real-time listeners
+        async function loadDataFromFirestore(currentAppId) {
+            if (!isAuthReady || !userId) {
+                console.warn("Authentication not ready or userId not available. Cannot load data from Firestore.");
+                return;
+            }
+
+            // Set up real-time listener for tasks
+            const tasksCollectionRef = collection(db, `artifacts/${currentAppId}/users/${userId}/tasks`);
+            onSnapshot(tasksCollectionRef, (snapshot) => {
+                appData.tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderAllTasks();
+                renderCalendar(); // Re-render calendar as tasks might change
+                renderProgress(); // Update progress based on new tasks
+            }, (error) => {
+                console.error("Error fetching tasks from Firestore:", error);
+                showMessage("Error al cargar tareas.", 'error');
+            });
+
+            // Set up real-time listener for notes
+            const notesCollectionRef = collection(db, `artifacts/${currentAppId}/users/${userId}/notes`);
+            onSnapshot(notesCollectionRef, (snapshot) => {
+                appData.notes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderAllNotes();
+            }, (error) => {
+                console.error("Error fetching notes from Firestore:", error);
+                showMessage("Error al cargar notas.", 'error');
+            });
+        }
+
 
         // Prevenir el comportamiento predeterminado de ciertos gestos
         document.addEventListener('touchmove', (e) => {
