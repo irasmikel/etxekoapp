@@ -1,0 +1,1132 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EtxekoApp — Tareas y Notas</title>
+  <meta name="theme-color" content="#0a0a0a" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ["Inter", "ui-sans-serif", "system-ui"] },
+          colors: {
+            surface: {
+              50: "#fafafa",
+              100: "#f5f5f5",
+              900: "#0a0a0a",
+            }
+          },
+          boxShadow: {
+            soft: "0 10px 30px rgba(0,0,0,0.35)",
+          }
+        }
+      }
+    }
+  </script>
+  <!-- React -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Firebase (Compat para uso sencillo con un único HTML) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+</head>
+<body class="bg-neutral-950 text-neutral-100 antialiased">
+  <div id="root"></div>
+
+  <script type="text/javascript">
+    // Inicializa Firebase con tus datos
+    const firebaseConfig = {
+      apiKey: "AIzaSyApVxmFp3bcogwMqaz0MQiIng6XzGwhTvY",
+      authDomain: "etxekoapp.firebaseapp.com",
+      projectId: "etxekoapp",
+      storageBucket: "etxekoapp.firebasestorage.app",
+      messagingSenderId: "1031385135784",
+      appId: "1:1031385135784:web:1018c0dadb87769495209d"
+    };
+    firebase.initializeApp(firebaseConfig);
+    window.db = firebase.firestore();
+  </script>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useState, useRef } = React;
+
+    // ==========================
+    // Utilidades de fecha
+    // ==========================
+    const todayISO = () => new Date().toISOString().slice(0, 10);
+    const toISO = (d) => new Date(d).toISOString().slice(0, 10);
+    const addDays = (dateISO, days) => {
+      const d = new Date(dateISO + "T00:00:00");
+      d.setDate(d.getDate() + days);
+      return toISO(d);
+    };
+    const startOfDay = (d) => new Date(new Date(d).toDateString());
+    const isSameDay = (aISO, bISO) => startOfDay(aISO).getTime() === startOfDay(bISO).getTime();
+    const isBefore = (aISO, bISO) => startOfDay(aISO) < startOfDay(bISO);
+    const weekdayOfISO = (iso) => new Date(iso + "T00:00:00").getDay(); // 0=Dom
+
+    function computeNextDue(task, fromISO) {
+      const base = fromISO || task.lastDone || todayISO();
+      const type = task.frequencyType || "interval";
+      if (type === "interval") {
+        const n = Math.max(1, Number(task.intervalDays || 7));
+        return addDays(base, n);
+      }
+      if (type === "weekly") {
+        const set = (task.weekdays && task.weekdays.length ? task.weekdays : [1]).sort();
+        for (let i = 1; i <= 14; i++) {
+          const cand = addDays(base, i);
+          if (set.includes(weekdayOfISO(cand))) return cand;
+        }
+        return addDays(base, 7);
+      }
+      if (type === "monthly") {
+        const mdays = (task.monthDays && task.monthDays.length ? task.monthDays : [1]).sort((a,b)=>a-b);
+        const d = new Date(base + "T00:00:00");
+        for (let i = 1; i <= 62; i++) {
+          d.setDate(d.getDate() + 1);
+          const day = d.getDate();
+          const cand = toISO(d);
+          if (mdays.includes(day)) return cand;
+        }
+        return addDays(base, 30);
+      }
+      if (type === "specificDays") {
+        const wSet = (task.weekdays && task.weekdays.length ? task.weekdays : []);
+        const mSet = (task.monthDays && task.monthDays.length ? task.monthDays : []);
+        const hasW = wSet.length > 0;
+        const hasM = mSet.length > 0;
+        const baseDate = new Date(base + "T00:00:00");
+        for (let i = 1; i <= 62; i++) {
+          baseDate.setDate(baseDate.getDate() + 1);
+          const cand = toISO(baseDate);
+          const w = baseDate.getDay();
+          const m = baseDate.getDate();
+          if ((hasW && hasM && wSet.includes(w) && mSet.includes(m)) ||
+              (hasW && !hasM && wSet.includes(w)) ||
+              (!hasW && hasM && mSet.includes(m))) {
+            return cand;
+          }
+        }
+        return addDays(base, 7);
+      }
+      return addDays(base, 7);
+    }
+
+    const PRIORITY_ORDER = { alta: 0, media: 1, baja: 2 };
+
+    // ==========================
+    // App principal
+    // ==========================
+    function App() {
+      const [tab, setTab] = useState("hoy"); // hoy | todas | notas | calendario | stats
+      const [query, setQuery] = useState("");
+      const [roomFilter, setRoomFilter] = useState("todas");
+      const [notificationPermission, setNotificationPermission] = useState("default");
+
+      const [tasks, setTasks] = useState([]);
+      const [notes, setNotes] = useState([]);
+      const [loading, setLoading] = useState(true);
+
+      // Suscripción a Firestore
+      useEffect(() => {
+        const unsubTasks = db.collection("tareas").orderBy("createdAt", "desc").onSnapshot((snap) => {
+          const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          setTasks(list);
+          setLoading(false);
+        });
+        const unsubNotes = db.collection("notas").orderBy("createdAt", "desc").onSnapshot((snap) => {
+          setNotes(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        });
+        return () => { unsubTasks(); unsubNotes(); };
+      }, []);
+
+      // Pedir permiso para notificaciones
+      useEffect(() => {
+        if ("Notification" in window) {
+          setNotificationPermission(Notification.permission);
+          if (Notification.permission === "default") {
+            Notification.requestPermission().then(permission => {
+              setNotificationPermission(permission);
+            });
+          }
+        }
+      }, []);
+
+      // Mostrar notificaciones para tareas de hoy
+      useEffect(() => {
+        if (notificationPermission !== "granted") return;
+        
+        const today = todayISO();
+        const todayTasks = tasks.filter(t => 
+          t.nextDue === today && 
+          !t.completed && 
+          (!t.lastNotified || t.lastNotified !== today)
+        );
+        
+        if (todayTasks.length > 0) {
+          new Notification("Tareas de hoy", {
+            body: `Tienes ${todayTasks.length} tareas pendientes para hoy.`,
+            icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23059669'><path d='M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z'/></svg>"
+          });
+          
+          // Actualizar última notificación
+          todayTasks.forEach(task => {
+            db.collection("tareas").doc(task.id).update({ lastNotified: today });
+          });
+        }
+      }, [tasks, notificationPermission]);
+
+      const rooms = useMemo(() => {
+        const set = new Set(tasks.map((t) => t.room || "General"));
+        return ["todas", ...Array.from(set)];
+      }, [tasks]);
+
+      const normalized = useMemo(() => {
+        return tasks.map((t) => ({
+          ...t,
+          nextDue: t.nextDue || computeNextDue(t, t.lastDone || todayISO()),
+        }));
+      }, [tasks]);
+
+      const today = todayISO();
+
+      const filtered = useMemo(() => {
+        const q = query.trim().toLowerCase();
+        return normalized
+          .filter((t) => (roomFilter === "todas" ? true : (t.room || "").toLowerCase() === roomFilter.toLowerCase()))
+          .filter((t) => (q ? `${t.title} ${t.room} ${t.notes}`.toLowerCase().includes(q) : true));
+      }, [normalized, roomFilter, query]);
+
+      const tasksToday = useMemo(() => {
+        return filtered
+          .filter((t) => isSameDay(t.nextDue, today))
+          .sort(sortByUrgency(today));
+      }, [filtered, today]);
+
+      const tasksAll = useMemo(() => filtered.slice().sort(sortByUrgency(today)), [filtered, today]);
+
+      function sortByUrgency(nowISO) {
+        return (a, b) => {
+          const aToday = isSameDay(a.nextDue, nowISO);
+          const bToday = isSameDay(b.nextDue, nowISO);
+          if (aToday !== bToday) return aToday ? -1 : 1;
+          const pr = (PRIORITY_ORDER[a.priority] ?? 1) - (PRIORITY_ORDER[b.priority] ?? 1);
+          if (pr !== 0) return pr;
+          return (a.title || "").localeCompare(b.title || "");
+        };
+      }
+
+      // Acciones Firestore
+      const createTask = async (t) => {
+        const base = {
+          title: "",
+          room: "General",
+          notes: "",
+          frequencyType: "weekly",
+          weekdays: [1],
+          monthDays: [],
+          intervalDays: 7,
+          priority: "media",
+          lastDone: todayISO(),
+          subtasks: [],
+          estimatedTime: 30,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        };
+        const task = { ...base, ...t };
+        task.nextDue = computeNextDue(task, task.lastDone);
+        await db.collection("tareas").add(task);
+      };
+
+      const updateTask = async (id, patch) => {
+        const ref = db.collection("tareas").doc(id);
+        const snap = await ref.get();
+        if (!snap.exists) return;
+        const cur = { id: snap.id, ...snap.data() };
+        const next = { ...cur, ...patch };
+        next.nextDue = computeNextDue(next, next.lastDone || todayISO());
+        await ref.update(next);
+      };
+
+      const removeTask = async (id) => {
+        if (!confirm("¿Eliminar esta tarea?")) return;
+        await db.collection("tareas").doc(id).delete();
+      };
+
+      const markDone = async (id) => {
+        const now = todayISO();
+        await updateTask(id, { lastDone: now });
+      };
+
+      const postpone = async (id, days = 1) => {
+        const t = tasks.find((x) => x.id === id);
+        const newNext = addDays((t?.nextDue || todayISO()), days);
+        await updateTask(id, { nextDue: newNext });
+      };
+
+      // Notas
+      const createNote = async (n) => {
+        const base = {
+          title: "",
+          content: "",
+          tags: [],
+          createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        };
+        await db.collection("notas").add({ ...base, ...n });
+      };
+      const updateNote = async (id, patch) => {
+        await db.collection("notas").doc(id).update(patch);
+      };
+      const removeNote = async (id) => {
+        if (!confirm("¿Eliminar esta nota?")) return;
+        await db.collection("notas").doc(id).delete();
+      };
+
+      return (
+        <div className="min-h-screen">
+          <Header 
+            tab={tab} 
+            setTab={setTab} 
+            tasksTodayCount={tasksToday.length} 
+            notificationPermission={notificationPermission}
+          />
+
+          <main className="max-w-6xl mx-auto px-4 pb-28">
+            <Toolbar
+              query={query}
+              setQuery={setQuery}
+              roomFilter={roomFilter}
+              setRoomFilter={setRoomFilter}
+              rooms={rooms}
+              onCreateTask={() => openTaskModal({ onSave: createTask })}
+              onCreateNote={() => openNoteModal({ onSave: createNote })}
+            />
+
+            {tab === "hoy" && (
+              <SectionList
+                title={`Tareas de hoy (${formatDateHuman(today)})`}
+                empty="Hoy no tienes tareas programadas. ¡Disfruta!"
+                tasks={tasksToday}
+                onEdit={(t) => openTaskModal({ task: t, onSave: (patch) => updateTask(t.id, patch) })}
+                onDone={(id) => markDone(id)}
+                onPostpone={(id) => postpone(id, 1)}
+                onRemove={removeTask}
+              />
+            )}
+
+            {tab === "todas" && (
+              <SectionList
+                title="Todas las tareas"
+                empty="Crea tu primera tarea con el botón de arriba."
+                tasks={tasksAll}
+                onEdit={(t) => openTaskModal({ task: t, onSave: (patch) => updateTask(t.id, patch) })}
+                onDone={(id) => markDone(id)}
+                onPostpone={(id) => postpone(id, 1)}
+                onRemove={removeTask}
+              />
+            )}
+
+            {tab === "notas" && (
+              <NotesSection
+                notes={notes}
+                onCreate={() => openNoteModal({ onSave: createNote })}
+                onEdit={(n) => openNoteModal({ note: n, onSave: (patch) => updateNote(n.id, patch) })}
+                onRemove={removeNote}
+              />
+            )}
+
+            {tab === "calendario" && (
+              <CalendarView
+                tasks={normalized}
+                onEdit={(t) => openTaskModal({ task: t, onSave: (patch) => updateTask(t.id, patch) })}
+                onDone={(id) => markDone(id)}
+                onPostpone={(id) => postpone(id, 1)}
+                onRemove={removeTask}
+              />
+            )}
+
+            {tab === "stats" && (
+              <Stats tasks={normalized} />
+            )}
+          </main>
+
+          <BottomBar onCreateTask={() => openTaskModal({ onSave: createTask })} onCreateNote={() => openNoteModal({ onSave: createNote })} />
+
+          {/* Portales para modales */}
+          <div id="modal-root"></div>
+        </div>
+      );
+    }
+
+    // =====================================
+    // UI Components
+    // =====================================
+    function Header({ tab, setTab, tasksTodayCount, notificationPermission }) {
+      return (
+        <header className="sticky top-0 z-20 backdrop-blur supports-[backdrop-filter]:bg-neutral-900/60 bg-neutral-900/90 border-b border-neutral-800">
+          <div className="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
+            <div className="size-9 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-soft" />
+            <div className="flex-1">
+              <h1 className="text-xl font-semibold leading-tight">EtxekoApp</h1>
+              <p className="text-xs text-neutral-400">Tareas y notas del hogar</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {notificationPermission === "granted" && (
+                <span className="hidden md:inline text-xs text-emerald-400">✓ Notificaciones activas</span>
+              )}
+              {notificationPermission === "denied" && (
+                <span className="hidden md:inline text-xs text-amber-400">⚠ Notificaciones bloqueadas</span>
+              )}
+              <a href="https://firebase.google.com/" target="_blank" className="hidden md:inline text-xs text-neutral-400 hover:text-neutral-200">Firebase conectado</a>
+            </div>
+          </div>
+          <div className="max-w-6xl mx-auto px-4 pb-3 flex flex-wrap items-center gap-2">
+            <div className="flex gap-2 bg-neutral-800/70 rounded-xl p-1">
+              {[
+                { key: "hoy", label: `Hoy${tasksTodayCount ? ` (${tasksTodayCount})` : ''}` },
+                { key: "todas", label: "Todas" },
+                { key: "notas", label: "Notas" },
+                { key: "calendario", label: "Calendario" },
+                { key: "stats", label: "Estadísticas" },
+              ].map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => setTab(t.key)}
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium transition ${
+                    tab === t.key ? "bg-neutral-100 text-neutral-900" : "text-neutral-300 hover:bg-neutral-700"
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    function Toolbar({ query, setQuery, roomFilter, setRoomFilter, rooms, onCreateTask, onCreateNote }) {
+      return (
+        <div className="mt-4 mb-2 flex flex-col md:flex-row gap-2 md:items-center">
+          <div className="flex-1 flex gap-2">
+            <div className="relative w-full md:w-80">
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Buscar tareas…"
+                className="w-full pl-9 pr-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              />
+              <div className="absolute left-3 top-2.5 text-neutral-500">🔎</div>
+            </div>
+            <select
+              value={roomFilter}
+              onChange={(e) => setRoomFilter(e.target.value)}
+              className="px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800"
+            >
+              {rooms.map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={onCreateTask} className="px-3 py-2 rounded-xl bg-emerald-500 text-black font-medium hover:bg-emerald-400 shadow">+ Nueva tarea</button>
+            <button onClick={onCreateNote} className="px-3 py-2 rounded-xl bg-teal-500 text-black font-medium hover:bg-teal-400 shadow">+ Nueva nota</button>
+          </div>
+        </div>
+      );
+    }
+
+    function SectionList({ title, empty, tasks, onEdit, onDone, onPostpone, onRemove }) {
+      return (
+        <section className="py-6">
+          <h2 className="text-lg font-semibold mb-4">{title}</h2>
+          {tasks.length === 0 ? (
+            <p className="text-neutral-400">{empty}</p>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {tasks.map((t) => (
+                <TaskCard key={t.id} t={t} onEdit={onEdit} onDone={onDone} onPostpone={onPostpone} onRemove={onRemove} />
+              ))}
+            </div>
+          )}
+        </section>
+      );
+    }
+
+    function TaskCard({ t, onEdit, onDone, onPostpone, onRemove }) {
+      const dueToday = isSameDay(t.nextDue, todayISO());
+      const overdue = isBefore(t.nextDue, todayISO());
+      
+      return (
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4 flex flex-col gap-3 hover:border-neutral-700 transition">
+          <div className="flex items-start gap-3">
+            <div className={`size-2 mt-2 rounded-full ${
+              overdue ? "bg-red-400" : 
+              dueToday ? "bg-amber-400" : "bg-emerald-400"
+            }`} />
+            <div className="flex-1">
+              <h3 className="font-semibold leading-tight">{t.title}</h3>
+              <p className="text-xs text-neutral-400">
+                {t.room || "General"} • Prioridad {t.priority || "media"} 
+                {t.estimatedTime && ` • ${t.estimatedTime} min`}
+              </p>
+              {t.notes && <p className="text-sm text-neutral-300 mt-1">{t.notes}</p>}
+              
+              {/* Subtareas */}
+              {(t.subtasks || []).length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-neutral-400 mb-1">Subtareas:</p>
+                  <div className="space-y-1">
+                    {t.subtasks.map((sub, index) => (
+                      <div key={index} className="flex items-center gap-2 text-sm">
+                        <input 
+                          type="checkbox" 
+                          checked={sub.completed} 
+                          onChange={() => {
+                            const updatedSubtasks = [...t.subtasks];
+                            updatedSubtasks[index].completed = !sub.completed;
+                            onEdit(t, { subtasks: updatedSubtasks });
+                          }}
+                          className="rounded"
+                        />
+                        <span className={sub.completed ? "line-through text-neutral-500" : ""}>
+                          {sub.title}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <button onClick={() => onRemove(t.id)} className="text-neutral-400 hover:text-red-400">Eliminar</button>
+          </div>
+          <div className="flex items-center justify-between text-sm">
+            <div className="text-neutral-300">
+              <div>Última vez: <span className="text-neutral-100">{t.lastDone || "—"}</span></div>
+              <div>Próxima: <span className={`${
+                overdue ? "text-red-300" : 
+                dueToday ? "text-amber-300" : "text-emerald-300"
+              }`}>{t.nextDue}</span></div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => onPostpone(t.id, 1)} className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Aplazar +1d</button>
+              <button onClick={() => onEdit(t)} className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Editar</button>
+              <button onClick={() => onDone(t.id)} className="px-2 py-1 rounded-lg bg-emerald-500 text-black font-medium hover:bg-emerald-400">Hecho</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function NotesSection({ notes, onCreate, onEdit, onRemove }) {
+      return (
+        <section className="py-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">Notas</h2>
+            <button onClick={onCreate} className="px-3 py-2 rounded-xl bg-teal-500 text-black font-medium hover:bg-teal-400 shadow">+ Nueva nota</button>
+          </div>
+          {notes.length === 0 ? (
+            <p className="text-neutral-400">No hay notas todavía.</p>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {notes.map((n) => (
+                <div key={n.id} className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4 flex flex-col gap-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold">{n.title || "(Sin título)"}</h3>
+                      {n.tags?.length ? (
+                        <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-neutral-300">
+                          {n.tags.map((t) => (
+                            <span key={t} className="px-2 py-0.5 rounded-full bg-neutral-800 border border-neutral-700">#{t}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex gap-2 text-sm">
+                      <button onClick={() => onEdit(n)} className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Editar</button>
+                      <button onClick={() => onRemove(n.id)} className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Eliminar</button>
+                    </div>
+                  </div>
+                  <div 
+                    className="text-neutral-200 text-sm prose prose-invert max-w-none"
+                    dangerouslySetInnerHTML={{ __html: n.content || '' }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      );
+    }
+
+    function CalendarView({ tasks, onEdit, onDone, onPostpone, onRemove }) {
+      const [currentDate, setCurrentDate] = useState(new Date());
+      const today = todayISO();
+      
+      // Funciones para navegar por el calendario
+      const prevMonth = () => {
+        setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+      };
+      
+      const nextMonth = () => {
+        setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+      };
+      
+      // Obtener el primer día del mes y el número de días
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth();
+      const firstDay = new Date(year, month, 1).getDay(); // 0 = Domingo
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      
+      // Crear array de días del mes (incluyendo días vacíos al principio)
+      const days = [];
+      // Rellenar con días vacíos al principio
+      for (let i = 0; i < firstDay; i++) {
+        days.push(null);
+      }
+      for (let i = 1; i <= daysInMonth; i++) {
+        const dateISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+        days.push(dateISO);
+      }
+      
+      // Agrupar tareas por día
+      const tasksByDay = {};
+      tasks.forEach(task => {
+        if (!tasksByDay[task.nextDue]) {
+          tasksByDay[task.nextDue] = [];
+        }
+        tasksByDay[task.nextDue].push(task);
+      });
+      
+      return (
+        <section className="py-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">
+              Calendario - {new Date(year, month).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+            </h2>
+            <div className="flex gap-2">
+              <button onClick={prevMonth} className="px-3 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Anterior</button>
+              <button onClick={() => setCurrentDate(new Date())} className="px-3 py-1 rounded-lg bg-emerald-500 text-black hover:bg-emerald-400">Hoy</button>
+              <button onClick={nextMonth} className="px-3 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Siguiente</button>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-7 gap-1 mb-2">
+            {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(day => (
+              <div key={day} className="text-center text-sm font-medium text-neutral-400 py-2">{day}</div>
+            ))}
+          </div>
+          
+          <div className="grid grid-cols-7 gap-1">
+            {days.map((dateISO, index) => {
+              if (dateISO === null) {
+                return <div key={index} className="h-24"></div>;
+              }
+              
+              const isToday = dateISO === today;
+              const dayTasks = tasksByDay[dateISO] || [];
+              const hasOverdue = dayTasks.some(t => isBefore(t.nextDue, today));
+              
+              return (
+                <div 
+                  key={dateISO} 
+                  className={`h-24 border border-neutral-800 rounded-lg p-1 ${
+                    isToday ? 'bg-neutral-800' : 'bg-neutral-900'
+                  } ${hasOverdue ? 'border-red-800' : ''}`}
+                >
+                  <div className={`text-sm font-medium ${
+                    isToday ? 'text-emerald-400' : 'text-neutral-300'
+                  }`}>
+                    {new Date(dateISO).getDate()}
+                  </div>
+                  
+                  <div className="mt-1 space-y-1 overflow-y-auto max-h-16">
+                    {dayTasks.slice(0, 2).map(task => (
+                      <div 
+                        key={task.id} 
+                        className={`text-xs p-1 rounded truncate cursor-pointer ${
+                          isBefore(task.nextDue, today) ? 'bg-red-900/50' : 
+                          isSameDay(task.nextDue, today) ? 'bg-amber-900/50' : 'bg-neutral-800'
+                        }`}
+                        onClick={() => onEdit(task)}
+                      >
+                        {task.title}
+                      </div>
+                    ))}
+                    {dayTasks.length > 2 && (
+                      <div className="text-xs text-neutral-400">+{dayTasks.length - 2} más</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      );
+    }
+
+    function Stats({ tasks }) {
+      const today = todayISO();
+      const total = tasks.length;
+      const onlyToday = tasks.filter((t) => isSameDay(t.nextDue, today)).length;
+      const upcoming = tasks.filter((t) => !isSameDay(t.nextDue, today) && !isBefore(t.nextDue, today)).length;
+      const overdue = tasks.filter((t) => isBefore(t.nextDue, today)).length;
+      const completed = tasks.filter((t) => t.completed).length;
+      const byRoom = groupBy(tasks, (t) => t.room || "General");
+      
+      // Calcular tiempo total estimado
+      const totalTime = tasks.reduce((sum, task) => sum + (task.estimatedTime || 0), 0);
+      
+      return (
+        <section className="py-6 space-y-6">
+          <h2 className="text-lg font-semibold">Estadísticas</h2>
+          
+          <div className="grid md:grid-cols-5 gap-3">
+            <StatCard label="Total" value={total} />
+            <StatCard label="Hoy" value={onlyToday} />
+            <StatCard label="Próximas" value={upcoming} />
+            <StatCard label="Atrasadas" value={overdue} />
+            <StatCard label="Completadas" value={completed} />
+          </div>
+          
+          <div>
+            <h3 className="text-sm text-neutral-400 mb-2">Tiempo total estimado</h3>
+            <div className="grid md:grid-cols-3 gap-3">
+              <StatCard label="Horas" value={Math.round(totalTime / 60 * 10) / 10} />
+              <StatCard label="Minutos" value={totalTime} />
+              <StatCard label="Días (8h)" value={Math.round(totalTime / 480 * 10) / 10} />
+            </div>
+          </div>
+          
+          <div>
+            <h3 className="text-sm text-neutral-400 mb-2">Por estancia</h3>
+            <div className="grid md:grid-cols-3 gap-3">
+              {Object.entries(byRoom).map(([room, list]) => (
+                <StatCard key={room} label={room} value={list.length} />
+              ))}
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+    function StatCard({ label, value }) {
+      return (
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4">
+          <div className="text-xs text-neutral-400">{label}</div>
+          <div className="text-2xl font-semibold">{value}</div>
+        </div>
+      );
+    }
+
+    function BottomBar({ onCreateTask, onCreateNote }) {
+      return (
+        <div className="fixed bottom-0 inset-x-0 z-30 border-t border-neutral-800 bg-neutral-900/95 backdrop-blur">
+          <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div className="text-xs text-neutral-400">Conectado a Firestore. Tus datos se guardan en la nube.</div>
+            <div className="flex gap-2">
+              <button onClick={onCreateTask} className="px-3 py-2 rounded-xl bg-emerald-500 text-black font-medium hover:bg-emerald-400 shadow">+ Nueva tarea</button>
+              <button onClick={onCreateNote} className="px-3 py-2 rounded-xl bg-teal-500 text-black font-medium hover:bg-teal-400 shadow">+ Nueva nota</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // =====================================
+    // Helpers
+    // =====================================
+    function groupBy(arr, keyFn) {
+      return arr.reduce((acc, item) => {
+        const k = keyFn(item);
+        acc[k] = acc[k] || [];
+        acc[k].push(item);
+        return acc;
+      }, {});
+    }
+
+    function formatDateHuman(iso) {
+      const d = new Date(iso + "T00:00:00");
+      const fmt = new Intl.DateTimeFormat("es-ES", { weekday: "long", day: "2-digit", month: "long" });
+      return fmt.format(d);
+    }
+
+    // =====================================
+    // Modales (Task & Note)
+    // =====================================
+    function openTaskModal({ task, onSave }) {
+      const container = document.getElementById('modal-root');
+      ReactDOM.render(<TaskModal task={task} onClose={() => ReactDOM.unmountComponentAtNode(container)} onSave={onSave} />, container);
+    }
+
+    function TaskModal({ task, onClose, onSave }) {
+      const isNew = !task;
+      const [t, setT] = useState(task || {
+        title: "",
+        room: "General",
+        notes: "",
+        frequencyType: "weekly",
+        weekdays: [1],
+        monthDays: [],
+        intervalDays: 7,
+        priority: "media",
+        lastDone: todayISO(),
+        subtasks: [],
+        estimatedTime: 30,
+      });
+
+      const toggleWeekday = (w) => {
+        const set = new Set(t.weekdays || []);
+        set.has(w) ? set.delete(w) : set.add(w);
+        setT({ ...t, weekdays: Array.from(set).sort() });
+      };
+      
+      const toggleMonthDay = (d) => {
+        const set = new Set(t.monthDays || []);
+        set.has(d) ? set.delete(d) : set.add(d);
+        setT({ ...t, monthDays: Array.from(set).sort((a,b)=>a-b) });
+      };
+
+      const addSubtask = () => {
+        setT({
+          ...t,
+          subtasks: [...(t.subtasks || []), { title: "", completed: false }]
+        });
+      };
+
+      const updateSubtask = (index, field, value) => {
+        const newSubtasks = [...t.subtasks];
+        newSubtasks[index] = { ...newSubtasks[index], [field]: value };
+        setT({ ...t, subtasks: newSubtasks });
+      };
+
+      const removeSubtask = (index) => {
+        const newSubtasks = [...t.subtasks];
+        newSubtasks.splice(index, 1);
+        setT({ ...t, subtasks: newSubtasks });
+      };
+
+      const handleSave = async () => {
+        if (!t.title.trim()) return alert("Pon un título a la tarea");
+        await onSave({ ...t });
+        onClose();
+      };
+
+      return (
+        <div className="fixed inset-0 z-40 grid place-items-center p-4 bg-black/50" onClick={onClose}>
+          <div className="w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="rounded-2xl bg-neutral-900 border border-neutral-800 shadow-xl p-4 md:p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">{isNew ? "Nueva tarea" : "Editar tarea"}</h3>
+                <div className="flex gap-2">
+                  <button onClick={onClose} className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700">Cancelar</button>
+                  <button onClick={handleSave} className="px-3 py-2 rounded-xl bg-emerald-500 text-black font-medium hover:bg-emerald-400">Guardar</button>
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <Input label="Título" value={t.title} onChange={(v) => setT({ ...t, title: v })} />
+                  <Input label="Estancia / zona" value={t.room || ""} onChange={(v) => setT({ ...t, room: v })} />
+                  <Select
+                    label="Prioridad"
+                    value={t.priority || "media"}
+                    onChange={(v) => setT({ ...t, priority: v })}
+                    options={[{label:"Alta", value:"alta"}, {label:"Media", value:"media"}, {label:"Baja", value:"baja"}]}
+                  />
+                  <Input 
+                    label="Tiempo estimado (minutos)" 
+                    type="number" 
+                    min="1" 
+                    value={t.estimatedTime || 30} 
+                    onChange={(v) => setT({ ...t, estimatedTime: Number(v) })} 
+                  />
+                  <Textarea label="Notas" value={t.notes || ""} onChange={(v) => setT({ ...t, notes: v })} />
+                </div>
+                <div className="space-y-3">
+                  <Select
+                    label="Tipo de frecuencia"
+                    value={t.frequencyType}
+                    onChange={(v) => setT({ ...t, frequencyType: v })}
+                    options={[
+                      { label: "Cada N días", value: "interval" },
+                      { label: "Días de la semana", value: "weekly" },
+                      { label: "Días del mes", value: "monthly" },
+                      { label: "Días específicos (flex)", value: "specificDays" },
+                    ]}
+                  />
+
+                  {t.frequencyType === "interval" && (
+                    <Input label="Cada cuántos días" type="number" min={1} value={t.intervalDays ?? 7} onChange={(v) => setT({ ...t, intervalDays: Number(v || 1) })} />
+                  )}
+
+                  {(t.frequencyType === "weekly" || t.frequencyType === "specificDays") && (
+                    <div>
+                      <Label>Días de la semana</Label>
+                      <div className="grid grid-cols-7 gap-1 mt-1">
+                        {["D", "L", "M", "X", "J", "V", "S"].map((d, i) => (
+                          <button
+                            key={d}
+                            className={`py-1 rounded-lg border text-sm ${
+                              (t.weekdays || []).includes(i)
+                                ? "bg-emerald-500 border-emerald-400 text-black"
+                                : "bg-neutral-800 border-neutral-700 text-neutral-300"
+                            }`}
+                            onClick={() => toggleWeekday(i)}
+                          >
+                            {d}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(t.frequencyType === "monthly" || t.frequencyType === "specificDays") && (
+                    <div>
+                      <Label>Días del mes</Label>
+                      <div className="grid grid-cols-7 gap-1 mt-1 max-h-40 overflow-auto pr-1">
+                        {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                          <button
+                            key={d}
+                            className={`py-1 rounded-lg border text-sm ${
+                              (t.monthDays || []).includes(d)
+                                ? "bg-emerald-500 border-emerald-400 text-black"
+                                : "bg-neutral-800 border-neutral-700 text-neutral-300"
+                            }`}
+                            onClick={() => toggleMonthDay(d)}
+                          >
+                            {d}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <Input label="Última vez (YYYY-MM-DD)" type="date" value={t.lastDone || todayISO()} onChange={(v) => setT({ ...t, lastDone: v })} />
+                  
+                  {/* Subtareas */}
+                  <div>
+                    <div className="flex justify-between items-center mb-1">
+                      <Label>Subtareas</Label>
+                      <button 
+                        type="button"
+                        onClick={addSubtask}
+                        className="text-xs px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                      >
+                        + Añadir
+                      </button>
+                    </div>
+                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                      {(t.subtasks || []).map((subtask, index) => (
+                        <div key={index} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={subtask.completed}
+                            onChange={(e) => updateSubtask(index, "completed", e.target.checked)}
+                            className="rounded"
+                          />
+                          <input
+                            type="text"
+                            value={subtask.title}
+                            onChange={(e) => updateSubtask(index, "title", e.target.value)}
+                            placeholder="Descripción de la subtarea"
+                            className="flex-1 px-3 py-1 rounded-lg bg-neutral-800 border border-neutral-700"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeSubtask(index)}
+                            className="px-2 py-1 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function openNoteModal({ note, onSave }) {
+      const container = document.getElementById('modal-root');
+      ReactDOM.render(<NoteModal note={note} onClose={() => ReactDOM.unmountComponentAtNode(container)} onSave={onSave} />, container);
+    }
+
+    function NoteModal({ note, onClose, onSave }) {
+      const isNew = !note;
+      const [n, setN] = useState(note || { title: "", content: "", tags: [] });
+      const [tagInput, setTagInput] = useState("");
+      const editorRef = useRef(null);
+
+      const addTag = () => {
+        const t = tagInput.trim();
+        if (!t) return;
+        if (n.tags?.includes(t)) return;
+        setN({ ...n, tags: [...(n.tags || []), t] });
+        setTagInput("");
+      };
+
+      const formatText = (command) => {
+        document.execCommand(command, false, null);
+        if (editorRef.current) {
+          setN({ ...n, content: editorRef.current.innerHTML });
+        }
+      };
+
+      const handleSave = async () => {
+        if (!n.title.trim() && !n.content.trim()) return alert("Escribe un título o contenido");
+        await onSave({ ...n });
+        onClose();
+      };
+
+      return (
+        <div className="fixed inset-0 z-40 grid place-items-center p-4 bg-black/50" onClick={onClose}>
+          <div className="w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="rounded-2xl bg-neutral-900 border border-neutral-800 shadow-xl p-4 md:p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">{isNew ? "Nueva nota" : "Editar nota"}</h3>
+                <div className="flex gap-2">
+                  <button onClick={onClose} className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700">Cancelar</button>
+                  <button onClick={handleSave} className="px-3 py-2 rounded-xl bg-teal-500 text-black font-medium hover:bg-teal-400">Guardar</button>
+                </div>
+              </div>
+
+              <Input label="Título" value={n.title} onChange={(v) => setN({ ...n, title: v })} />
+              
+              <div className="mt-3">
+                <div className="flex justify-between items-center mb-1">
+                  <Label>Contenido</Label>
+                  <div className="flex gap-1">
+                    <button 
+                      type="button"
+                      onClick={() => formatText('bold')}
+                      className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                      title="Negrita"
+                    >
+                      <strong>B</strong>
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => formatText('italic')}
+                      className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                      title="Cursiva"
+                    >
+                      <em>I</em>
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => formatText('underline')}
+                      className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                      title="Subrayado"
+                    >
+                      <u>U</u>
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => formatText('insertUnorderedList')}
+                      className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                      title="Lista sin ordenar"
+                    >
+                      • Lista
+                    </button>
+                  </div>
+                </div>
+                <div
+                  ref={editorRef}
+                  contentEditable
+                  dangerouslySetInnerHTML={{ __html: n.content || '' }}
+                  onInput={(e) => setN({ ...n, content: e.currentTarget.innerHTML })}
+                  className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-teal-500 min-h-40 max-h-96 overflow-y-auto"
+                />
+              </div>
+
+              <div className="mt-3">
+                <Label>Etiquetas</Label>
+                <div className="flex gap-2">
+                  <input
+                    value={tagInput}
+                    onChange={(e) => setTagInput(e.target.value)}
+                    placeholder="añade una etiqueta y pulsa +"
+                    className="flex-1 px-3 py-2 rounded-xl bg-neutral-800 border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                  <button onClick={addTag} className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700">+</button>
+                </div>
+                {n.tags?.length ? (
+                  <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-neutral-300">
+                    {n.tags.map((t) => (
+                      <span key={t} className="px-2 py-0.5 rounded-full bg-neutral-800 border border-neutral-700">#{t}</span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Reusables
+    function Input({ label, value, onChange, type = "text", ...rest }) {
+      return (
+        <label className="block">
+          <Label>{label}</Label>
+          <input
+            type={type}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            {...rest}
+          />
+        </label>
+      );
+    }
+
+    function Textarea({ label, value, onChange }) {
+      return (
+        <label className="block">
+          <Label>{label}</Label>
+          <textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 min-h-28"
+          />
+        </label>
+      );
+    }
+
+    function Select({ label, value, onChange, options }) {
+      return (
+        <label className="block">
+          <Label>{label}</Label>
+          <select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          >
+            {options.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+      );
+    }
+
+    function Label({ children }) { return <div className="text-xs text-neutral-400 mb-1">{children}</div>; }
+
+    // Monta la app
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
