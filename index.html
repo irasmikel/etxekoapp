@@ -36,6 +36,9 @@
   <!-- Firebase (Compat para uso sencillo con un único HTML) -->
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+  <!-- Chart.js para gráficos -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-neutral-950 text-neutral-100 antialiased">
   <div id="root"></div>
@@ -60,11 +63,22 @@
     // ==========================
     // Utilidades de fecha
     // ==========================
-    const todayISO = () => new Date().toISOString().slice(0, 10);
+    const todayISO = () => {
+      const d = new Date();
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
     const toISO = (d) => new Date(d).toISOString().slice(0, 10);
     const addDays = (dateISO, days) => {
       const d = new Date(dateISO + "T00:00:00");
       d.setDate(d.getDate() + days);
+      return toISO(d);
+    };
+    const addYears = (dateISO, years) => {
+      const d = new Date(dateISO + "T00:00:00");
+      d.setFullYear(d.getFullYear() + years);
       return toISO(d);
     };
     const startOfDay = (d) => new Date(new Date(d).toDateString());
@@ -73,23 +87,29 @@
     const weekdayOfISO = (iso) => new Date(iso + "T00:00:00").getDay(); // 0=Dom
 
     function computeNextDue(task, fromISO) {
-      const base = fromISO || task.lastDone || todayISO();
+      const base = fromISO || todayISO(); // Siempre buscar desde hoy o la fecha proporcionada
       const type = task.frequencyType || "interval";
+      
       if (type === "interval") {
         const n = Math.max(1, Number(task.intervalDays || 7));
         return addDays(base, n);
       }
       if (type === "weekly") {
         const set = (task.weekdays && task.weekdays.length ? task.weekdays : [1]).sort();
-        for (let i = 1; i <= 14; i++) {
-          const cand = addDays(base, i);
-          if (set.includes(weekdayOfISO(cand))) return cand;
+        let currentDate = new Date(base + "T00:00:00");
+        // Iterar hasta encontrar el siguiente día válido
+        for (let i = 0; i < 14; i++) { // Buscar hasta 2 semanas en el futuro para asegurar un match
+          currentDate.setDate(currentDate.getDate() + 1); // Avanzar un día
+          const candISO = toISO(currentDate);
+          if (set.includes(weekdayOfISO(candISO))) {
+            return candISO;
+          }
         }
-        return addDays(base, 7);
+        return addDays(base, 7); // Fallback si no se encuentra en 2 semanas
       }
       if (type === "monthly") {
         const mdays = (task.monthDays && task.monthDays.length ? task.monthDays : [1]).sort((a,b)=>a-b);
-        const d = new Date(base + "T00:00:00");
+        let d = new Date(base + "T00:00:00");
         for (let i = 1; i <= 62; i++) {
           d.setDate(d.getDate() + 1);
           const day = d.getDate();
@@ -98,13 +118,16 @@
         }
         return addDays(base, 30);
       }
+      if (type === "yearly") { // Nueva frecuencia anual
+        return addYears(base, 1);
+      }
       if (type === "specificDays") {
         const wSet = (task.weekdays && task.weekdays.length ? task.weekdays : []);
         const mSet = (task.monthDays && task.monthDays.length ? task.monthDays : []);
         const hasW = wSet.length > 0;
         const hasM = mSet.length > 0;
-        const baseDate = new Date(base + "T00:00:00");
-        for (let i = 1; i <= 62; i++) {
+        let baseDate = new Date(base + "T00:00:00");
+        for (let i = 0; i < 62; i++) { // Buscar hasta 2 meses en el futuro
           baseDate.setDate(baseDate.getDate() + 1);
           const cand = toISO(baseDate);
           const w = baseDate.getDay();
@@ -115,24 +138,25 @@
             return cand;
           }
         }
-        return addDays(base, 7);
+        return addDays(base, 7); // Fallback
       }
       return addDays(base, 7);
     }
-
-    const PRIORITY_ORDER = { alta: 0, media: 1, baja: 2 };
 
     // ==========================
     // App principal
     // ==========================
     function App() {
-      const [tab, setTab] = useState("hoy"); // hoy | todas | notas | calendario | stats
+      const [tab, setTab] = useState("hoy"); // hoy | todas | notas | historial | stats
       const [query, setQuery] = useState("");
       const [roomFilter, setRoomFilter] = useState("todas");
       const [notificationPermission, setNotificationPermission] = useState("default");
+      const [sortKey, setSortKey] = useState("nextDue"); // Estado para la clave de ordenación
+      const [sortOrder, setSortOrder] = useState("asc"); // Estado para el orden de ordenación (asc/desc)
 
       const [tasks, setTasks] = useState([]);
       const [notes, setNotes] = useState([]);
+      const [historyTasks, setHistoryTasks] = useState([]); // Nuevo estado para historial
       const [loading, setLoading] = useState(true);
 
       // Suscripción a Firestore
@@ -145,7 +169,16 @@
         const unsubNotes = db.collection("notas").orderBy("createdAt", "desc").onSnapshot((snap) => {
           setNotes(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
         });
-        return () => { unsubTasks(); unsubNotes(); };
+        // Suscripción a la nueva colección de historial
+        const unsubHistoryTasks = db.collection("historialTareas").orderBy("completedAt", "desc").onSnapshot((snap) => {
+          setHistoryTasks(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        });
+
+        return () => { 
+          unsubTasks(); 
+          unsubNotes(); 
+          unsubHistoryTasks(); // Limpiar suscripción de historial
+        };
       }, []);
 
       // Pedir permiso para notificaciones
@@ -185,8 +218,10 @@
       }, [tasks, notificationPermission]);
 
       const rooms = useMemo(() => {
-        const set = new Set(tasks.map((t) => t.room || "General"));
-        return ["todas", ...Array.from(set)];
+        // Incluir las estancias predefinidas y las que ya existen en las tareas
+        const defaultRooms = ["General", "Baños", "Dormitorios", "Cocina", "Salon", "Balcon"];
+        const existingRooms = new Set(tasks.map((t) => t.room).filter(Boolean));
+        return ["todas", ...defaultRooms, ...Array.from(existingRooms)].filter((value, index, self) => self.indexOf(value) === index);
       }, [tasks]);
 
       const normalized = useMemo(() => {
@@ -205,24 +240,48 @@
           .filter((t) => (q ? `${t.title} ${t.room} ${t.notes}`.toLowerCase().includes(q) : true));
       }, [normalized, roomFilter, query]);
 
+      const sortTasks = (tasksList, currentSortKey, currentSortOrder, isHistoryData = false) => {
+        return tasksList.slice().sort((a, b) => {
+          let valA, valB;
+          if (isHistoryData) {
+            valA = a[currentSortKey] ? a[currentSortKey].toDate().getTime() : 0;
+            valB = b[currentSortKey] ? b[currentSortKey].toDate().getTime() : 0;
+          } else {
+            valA = a[currentSortKey] || "";
+            valB = b[currentSortKey] || "";
+          }
+          
+          if (currentSortKey === "title" || currentSortKey === "room") {
+            return currentSortOrder === "asc" 
+              ? String(valA).localeCompare(String(valB)) 
+              : String(valB).localeCompare(String(valA));
+          } else if (currentSortKey === "nextDue" || currentSortKey === "completedAt") {
+            // Comparar fechas si es un campo de fecha
+            const dateA = new Date(valA);
+            const dateB = new Date(valB);
+            return currentSortOrder === "asc" ? dateA - dateB : dateB - dateA;
+          }
+          return 0; // No change
+        });
+      };
+
       const tasksToday = useMemo(() => {
-        return filtered
-          .filter((t) => isSameDay(t.nextDue, today))
-          .sort(sortByUrgency(today));
-      }, [filtered, today]);
+        return sortTasks(
+          filtered.filter((t) => isSameDay(t.nextDue, today)),
+          sortKey,
+          sortOrder
+        );
+      }, [filtered, today, sortKey, sortOrder]);
 
-      const tasksAll = useMemo(() => filtered.slice().sort(sortByUrgency(today)), [filtered, today]);
+      const tasksAll = useMemo(() => {
+        return sortTasks(filtered, sortKey, sortOrder);
+      }, [filtered, sortKey, sortOrder]);
 
-      function sortByUrgency(nowISO) {
-        return (a, b) => {
-          const aToday = isSameDay(a.nextDue, nowISO);
-          const bToday = isSameDay(b.nextDue, nowISO);
-          if (aToday !== bToday) return aToday ? -1 : 1;
-          const pr = (PRIORITY_ORDER[a.priority] ?? 1) - (PRIORITY_ORDER[b.priority] ?? 1);
-          if (pr !== 0) return pr;
-          return (a.title || "").localeCompare(b.title || "");
-        };
-      }
+      const historyTasksSorted = useMemo(() => {
+        // Por defecto, historial se ordena por completedAt descendente
+        return sortTasks(historyTasks, "completedAt", "desc", true); 
+      }, [historyTasks]);
+
 
       // Acciones Firestore
       const createTask = async (t) => {
@@ -234,14 +293,10 @@
           weekdays: [1],
           monthDays: [],
           intervalDays: 7,
-          priority: "media",
           lastDone: todayISO(),
-          subtasks: [],
-          estimatedTime: 30,
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         };
         const task = { ...base, ...t };
-        task.nextDue = computeNextDue(task, task.lastDone);
         await db.collection("tareas").add(task);
       };
 
@@ -251,18 +306,64 @@
         if (!snap.exists) return;
         const cur = { id: snap.id, ...snap.data() };
         const next = { ...cur, ...patch };
-        next.nextDue = computeNextDue(next, next.lastDone || todayISO());
         await ref.update(next);
       };
 
       const removeTask = async (id) => {
-        if (!confirm("¿Eliminar esta tarea?")) return;
+        const confirmDelete = await showCustomConfirm("¿Eliminar esta tarea?", "Esta acción es irreversible.");
+        if (!confirmDelete) return;
         await db.collection("tareas").doc(id).delete();
       };
 
+      const removeHistoryTask = async (id) => {
+        const confirmDelete = await showCustomConfirm("¿Eliminar esta tarea del historial?", "Esta acción es irreversible.");
+        if (!confirmDelete) return;
+        await db.collection("historialTareas").doc(id).delete();
+      };
+
+      const removeAllHistoryTasks = async () => {
+        const confirmDelete = await showCustomConfirm(
+          "¿Eliminar TODAS las tareas del historial?", 
+          "Esta acción es irreversible y eliminará todos los registros de tareas completadas."
+        );
+        if (!confirmDelete) return;
+
+        const historyCollectionRef = db.collection("historialTareas");
+        const snapshot = await historyCollectionRef.get();
+        const batch = db.batch();
+
+        snapshot.docs.forEach(doc => {
+          batch.delete(doc.ref);
+        });
+
+        await batch.commit();
+        showCustomAlert("Todas las tareas del historial han sido eliminadas.");
+      };
+
+
       const markDone = async (id) => {
         const now = todayISO();
-        await updateTask(id, { lastDone: now });
+        const taskRef = db.collection("tareas").doc(id);
+        const taskSnap = await taskRef.get();
+        if (!taskSnap.exists) return;
+        const taskData = taskSnap.data();
+
+        // Añadir la tarea actual al historial
+        await db.collection("historialTareas").add({
+          ...taskData,
+          originalTaskId: id, // Guardar el ID original de la tarea
+          completedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          status: "done"
+        });
+
+        // Calcular la próxima fecha de vencimiento para la tarea original
+        // y actualizarla en la colección 'tareas' para que siga siendo recurrente
+        const updatedTaskData = {
+          ...taskData,
+          lastDone: now, // La tarea se ha completado hoy
+          nextDue: computeNextDue(taskData, now) // Calcular la próxima fecha a partir de hoy
+        };
+        await taskRef.update(updatedTaskData);
       };
 
       const postpone = async (id, days = 1) => {
@@ -276,7 +377,6 @@
         const base = {
           title: "",
           content: "",
-          tags: [],
           createdAt: firebase.firestore.FieldValue.serverTimestamp(),
         };
         await db.collection("notas").add({ ...base, ...n });
@@ -285,7 +385,8 @@
         await db.collection("notas").doc(id).update(patch);
       };
       const removeNote = async (id) => {
-        if (!confirm("¿Eliminar esta nota?")) return;
+        const confirmDelete = await showCustomConfirm("¿Eliminar esta nota?", "Esta acción es irreversible.");
+        if (!confirmDelete) return;
         await db.collection("notas").doc(id).delete();
       };
 
@@ -300,13 +401,18 @@
 
           <main className="max-w-6xl mx-auto px-4 pb-28">
             <Toolbar
+              tab={tab} // Pasamos la pestaña actual a Toolbar
               query={query}
               setQuery={setQuery}
               roomFilter={roomFilter}
               setRoomFilter={setRoomFilter}
               rooms={rooms}
-              onCreateTask={() => openTaskModal({ onSave: createTask })}
+              onCreateTask={() => openTaskModal({ onSave: createTask, rooms: rooms })}
               onCreateNote={() => openNoteModal({ onSave: createNote })}
+              sortKey={sortKey} // Pasamos el estado de ordenación
+              setSortKey={setSortKey} // Pasamos la función para cambiar el estado de ordenación
+              sortOrder={sortOrder}
+              setSortOrder={setSortOrder}
             />
 
             {tab === "hoy" && (
@@ -314,7 +420,7 @@
                 title={`Tareas de hoy (${formatDateHuman(today)})`}
                 empty="Hoy no tienes tareas programadas. ¡Disfruta!"
                 tasks={tasksToday}
-                onEdit={(t) => openTaskModal({ task: t, onSave: (patch) => updateTask(t.id, patch) })}
+                onEdit={(t) => openTaskModal({ task: t, onSave: (patch) => updateTask(t.id, patch), rooms: rooms })}
                 onDone={(id) => markDone(id)}
                 onPostpone={(id) => postpone(id, 1)}
                 onRemove={removeTask}
@@ -326,7 +432,7 @@
                 title="Todas las tareas"
                 empty="Crea tu primera tarea con el botón de arriba."
                 tasks={tasksAll}
-                onEdit={(t) => openTaskModal({ task: t, onSave: (patch) => updateTask(t.id, patch) })}
+                onEdit={(t) => openTaskModal({ task: t, onSave: (patch) => updateTask(t.id, patch), rooms: rooms })}
                 onDone={(id) => markDone(id)}
                 onPostpone={(id) => postpone(id, 1)}
                 onRemove={removeTask}
@@ -342,22 +448,22 @@
               />
             )}
 
-            {tab === "calendario" && (
-              <CalendarView
-                tasks={normalized}
-                onEdit={(t) => openTaskModal({ task: t, onSave: (patch) => updateTask(t.id, patch) })}
-                onDone={(id) => markDone(id)}
-                onPostpone={(id) => postpone(id, 1)}
-                onRemove={removeTask}
+            {tab === "historial" && ( // Nuevo tab de historial
+              <SectionList
+                title="Historial de tareas completadas"
+                empty="Aún no hay tareas en el historial."
+                tasks={historyTasksSorted} // Mostrar tareas del historial ordenadas
+                onRemove={removeHistoryTask} // Permitir eliminar tareas individuales del historial
+                onClearAll={removeAllHistoryTasks} // Nuevo prop para eliminar todo el historial
               />
             )}
 
             {tab === "stats" && (
-              <Stats tasks={normalized} />
+              <Stats tasks={normalized} historyTasks={historyTasks} />
             )}
           </main>
 
-          <BottomBar onCreateTask={() => openTaskModal({ onSave: createTask })} onCreateNote={() => openNoteModal({ onSave: createNote })} />
+          <BottomBar onCreateTask={() => openTaskModal({ onSave: createTask, rooms: rooms })} onCreateNote={() => openNoteModal({ onSave: createNote })} />
 
           {/* Portales para modales */}
           <div id="modal-root"></div>
@@ -393,7 +499,7 @@
                 { key: "hoy", label: `Hoy${tasksTodayCount ? ` (${tasksTodayCount})` : ''}` },
                 { key: "todas", label: "Todas" },
                 { key: "notas", label: "Notas" },
-                { key: "calendario", label: "Calendario" },
+                { key: "historial", label: "Historial" },
                 { key: "stats", label: "Estadísticas" },
               ].map((t) => (
                 <button
@@ -412,7 +518,52 @@
       );
     }
 
-    function Toolbar({ query, setQuery, roomFilter, setRoomFilter, rooms, onCreateTask, onCreateNote }) {
+    function Toolbar({ tab, query, setQuery, roomFilter, setRoomFilter, rooms, onCreateTask, onCreateNote, sortKey, setSortKey, sortOrder, setSortOrder }) {
+      const showNewTaskButton = tab === "hoy" || tab === "todas";
+      const showNewNoteButton = tab === "notas";
+      const showSortingOptions = tab === "todas" || tab === "historial";
+
+      const sortOptions = useMemo(() => {
+        if (tab === "historial") {
+          return [
+            { value: "completedAt_desc", label: "Completado (Reciente)" },
+            { value: "completedAt_asc", label: "Completado (Antiguo)" },
+            { value: "title_asc", label: "Título (A-Z)" },
+            { value: "title_desc", label: "Título (Z-A)" },
+            { value: "room_asc", label: "Estancia (A-Z)" },
+            { value: "room_desc", label: "Estancia (Z-A)" },
+          ];
+        } else { // 'hoy' y 'todas'
+          return [
+            { value: "nextDue_asc", label: "Próxima Fecha (Pronto)" },
+            { value: "nextDue_desc", label: "Próxima Fecha (Tarde)" },
+            { value: "title_asc", label: "Título (A-Z)" },
+            { value: "title_desc", label: "Título (Z-A)" },
+            { value: "room_asc", label: "Estancia (A-Z)" },
+            { value: "room_desc", label: "Estancia (Z-A)" },
+          ];
+        }
+      }, [tab]);
+
+      // Manejar el cambio de ordenación
+      const handleSortChange = (e) => {
+        const [key, order] = e.target.value.split('_');
+        setSortKey(key);
+        setSortOrder(order);
+      };
+
+      // Establecer la ordenación por defecto cuando cambia de pestaña
+      useEffect(() => {
+        if (tab === "historial") {
+          setSortKey("completedAt");
+          setSortOrder("desc");
+        } else if (tab === "hoy" || tab === "todas") {
+          setSortKey("nextDue");
+          setSortOrder("asc");
+        }
+      }, [tab, setSortKey, setSortOrder]);
+
+
       return (
         <div className="mt-4 mb-2 flex flex-col md:flex-row gap-2 md:items-center">
           <div className="flex-1 flex gap-2">
@@ -434,25 +585,60 @@
                 <option key={r} value={r}>{r}</option>
               ))}
             </select>
+            {showSortingOptions && (
+              <select
+                value={`${sortKey}_${sortOrder}`}
+                onChange={handleSortChange}
+                className="px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800"
+              >
+                {sortOptions.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="flex gap-2">
-            <button onClick={onCreateTask} className="px-3 py-2 rounded-xl bg-emerald-500 text-black font-medium hover:bg-emerald-400 shadow">+ Nueva tarea</button>
-            <button onClick={onCreateNote} className="px-3 py-2 rounded-xl bg-teal-500 text-black font-medium hover:bg-teal-400 shadow">+ Nueva nota</button>
+            {showNewTaskButton && (
+              <button onClick={onCreateTask} className="px-3 py-2 rounded-xl bg-emerald-500 text-black font-medium hover:bg-emerald-400 shadow">+ Nueva tarea</button>
+            )}
+            {showNewNoteButton && (
+              <button onClick={onCreateNote} className="px-3 py-2 rounded-xl bg-teal-500 text-black font-medium hover:bg-teal-400 shadow">+ Nueva nota</button>
+            )}
           </div>
         </div>
       );
     }
 
-    function SectionList({ title, empty, tasks, onEdit, onDone, onPostpone, onRemove }) {
+    function SectionList({ title, empty, tasks, onEdit, onDone, onPostpone, onRemove, onClearAll }) {
+      const isHistorySection = title.includes("Historial"); // Determina si es la sección de historial
+
       return (
         <section className="py-6">
-          <h2 className="text-lg font-semibold mb-4">{title}</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">{title}</h2>
+            {isHistorySection && tasks.length > 0 && (
+              <button
+                onClick={onClearAll}
+                className="px-3 py-1.5 rounded-xl bg-red-700/50 text-red-300 font-medium hover:bg-red-700/70 shadow"
+              >
+                Eliminar todo el historial
+              </button>
+            )}
+          </div>
           {tasks.length === 0 ? (
             <p className="text-neutral-400">{empty}</p>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
               {tasks.map((t) => (
-                <TaskCard key={t.id} t={t} onEdit={onEdit} onDone={onDone} onPostpone={onPostpone} onRemove={onRemove} />
+                <TaskCard 
+                  key={t.id} 
+                  t={t} 
+                  onEdit={onEdit} 
+                  onDone={onDone} 
+                  onPostpone={onPostpone} 
+                  onRemove={onRemove} 
+                  isHistory={isHistorySection} 
+                />
               ))}
             </div>
           )}
@@ -460,7 +646,7 @@
       );
     }
 
-    function TaskCard({ t, onEdit, onDone, onPostpone, onRemove }) {
+    function TaskCard({ t, onEdit, onDone, onPostpone, onRemove, isHistory }) {
       const dueToday = isSameDay(t.nextDue, todayISO());
       const overdue = isBefore(t.nextDue, todayISO());
       
@@ -469,58 +655,39 @@
           <div className="flex items-start gap-3">
             <div className={`size-2 mt-2 rounded-full ${
               overdue ? "bg-red-400" : 
-              dueToday ? "bg-amber-400" : "bg-emerald-400"
+              dueToday ? "bg-amber-400" : 
+              isHistory ? "bg-gray-500" : "bg-emerald-400" 
             }`} />
             <div className="flex-1">
               <h3 className="font-semibold leading-tight">{t.title}</h3>
               <p className="text-xs text-neutral-400">
-                {t.room || "General"} • Prioridad {t.priority || "media"} 
-                {t.estimatedTime && ` • ${t.estimatedTime} min`}
+                {t.room || "General"} 
               </p>
               {t.notes && <p className="text-sm text-neutral-300 mt-1">{t.notes}</p>}
-              
-              {/* Subtareas */}
-              {(t.subtasks || []).length > 0 && (
-                <div className="mt-2">
-                  <p className="text-xs text-neutral-400 mb-1">Subtareas:</p>
-                  <div className="space-y-1">
-                    {t.subtasks.map((sub, index) => (
-                      <div key={index} className="flex items-center gap-2 text-sm">
-                        <input 
-                          type="checkbox" 
-                          checked={sub.completed} 
-                          onChange={() => {
-                            const updatedSubtasks = [...t.subtasks];
-                            updatedSubtasks[index].completed = !sub.completed;
-                            onEdit(t, { subtasks: updatedSubtasks });
-                          }}
-                          className="rounded"
-                        />
-                        <span className={sub.completed ? "line-through text-neutral-500" : ""}>
-                          {sub.title}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
-            <button onClick={() => onRemove(t.id)} className="text-neutral-400 hover:text-red-400">Eliminar</button>
+            {onRemove && ( // Mostrar botón de eliminar solo si onRemove está definido (para tareas activas e historial)
+              <button onClick={() => onRemove(t.id)} className="text-neutral-400 hover:text-red-400">Eliminar</button>
+            )}
+            {isHistory && ( 
+              <div className="text-xs text-neutral-400">Completado: {t.completedAt ? toISO(t.completedAt.toDate()) : 'N/A'}</div>
+            )}
           </div>
-          <div className="flex items-center justify-between text-sm">
-            <div className="text-neutral-300">
-              <div>Última vez: <span className="text-neutral-100">{t.lastDone || "—"}</span></div>
-              <div>Próxima: <span className={`${
-                overdue ? "text-red-300" : 
-                dueToday ? "text-amber-300" : "text-emerald-300"
-              }`}>{t.nextDue}</span></div>
+          {!isHistory && ( // Ocultamos los detalles de próxima y última vez para tareas del historial
+            <div className="flex items-center justify-between text-sm">
+              <div className="text-neutral-300">
+                <div>Última vez: <span className="text-neutral-100">{t.lastDone || "—"}</span></div>
+                <div>Próxima: <span className={`${
+                  overdue ? "text-red-300" : 
+                  dueToday ? "text-amber-300" : "text-emerald-300"
+                }`}>{t.nextDue}</span></div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => onPostpone(t.id, 1)} className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Aplazar +1d</button>
+                <button onClick={() => onEdit(t)} className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Editar</button>
+                <button onClick={() => onDone(t.id)} className="px-2 py-1 rounded-lg bg-emerald-500 text-black font-medium hover:bg-emerald-400">Hecho</button>
+              </div>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => onPostpone(t.id, 1)} className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Aplazar +1d</button>
-              <button onClick={() => onEdit(t)} className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Editar</button>
-              <button onClick={() => onDone(t.id)} className="px-2 py-1 rounded-lg bg-emerald-500 text-black font-medium hover:bg-emerald-400">Hecho</button>
-            </div>
-          </div>
+          )}
         </div>
       );
     }
@@ -530,7 +697,6 @@
         <section className="py-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">Notas</h2>
-            <button onClick={onCreate} className="px-3 py-2 rounded-xl bg-teal-500 text-black font-medium hover:bg-teal-400 shadow">+ Nueva nota</button>
           </div>
           {notes.length === 0 ? (
             <p className="text-neutral-400">No hay notas todavía.</p>
@@ -541,13 +707,6 @@
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h3 className="font-semibold">{n.title || "(Sin título)"}</h3>
-                      {n.tags?.length ? (
-                        <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-neutral-300">
-                          {n.tags.map((t) => (
-                            <span key={t} className="px-2 py-0.5 rounded-full bg-neutral-800 border border-neutral-700">#{t}</span>
-                          ))}
-                        </div>
-                      ) : null}
                     </div>
                     <div className="flex gap-2 text-sm">
                       <button onClick={() => onEdit(n)} className="px-2 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Editar</button>
@@ -566,149 +725,181 @@
       );
     }
 
-    function CalendarView({ tasks, onEdit, onDone, onPostpone, onRemove }) {
-      const [currentDate, setCurrentDate] = useState(new Date());
-      const today = todayISO();
-      
-      // Funciones para navegar por el calendario
-      const prevMonth = () => {
-        setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
-      };
-      
-      const nextMonth = () => {
-        setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
-      };
-      
-      // Obtener el primer día del mes y el número de días
-      const year = currentDate.getFullYear();
-      const month = currentDate.getMonth();
-      const firstDay = new Date(year, month, 1).getDay(); // 0 = Domingo
-      const daysInMonth = new Date(year, month + 1, 0).getDate();
-      
-      // Crear array de días del mes (incluyendo días vacíos al principio)
-      const days = [];
-      // Rellenar con días vacíos al principio
-      for (let i = 0; i < firstDay; i++) {
-        days.push(null);
-      }
-      for (let i = 1; i <= daysInMonth; i++) {
-        const dateISO = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-        days.push(dateISO);
-      }
-      
-      // Agrupar tareas por día
-      const tasksByDay = {};
-      tasks.forEach(task => {
-        if (!tasksByDay[task.nextDue]) {
-          tasksByDay[task.nextDue] = [];
-        }
-        tasksByDay[task.nextDue].push(task);
-      });
-      
-      return (
-        <section className="py-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">
-              Calendario - {new Date(year, month).toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
-            </h2>
-            <div className="flex gap-2">
-              <button onClick={prevMonth} className="px-3 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Anterior</button>
-              <button onClick={() => setCurrentDate(new Date())} className="px-3 py-1 rounded-lg bg-emerald-500 text-black hover:bg-emerald-400">Hoy</button>
-              <button onClick={nextMonth} className="px-3 py-1 rounded-lg bg-neutral-800 hover:bg-neutral-700">Siguiente</button>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-7 gap-1 mb-2">
-            {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(day => (
-              <div key={day} className="text-center text-sm font-medium text-neutral-400 py-2">{day}</div>
-            ))}
-          </div>
-          
-          <div className="grid grid-cols-7 gap-1">
-            {days.map((dateISO, index) => {
-              if (dateISO === null) {
-                return <div key={index} className="h-24"></div>;
-              }
-              
-              const isToday = dateISO === today;
-              const dayTasks = tasksByDay[dateISO] || [];
-              const hasOverdue = dayTasks.some(t => isBefore(t.nextDue, today));
-              
-              return (
-                <div 
-                  key={dateISO} 
-                  className={`h-24 border border-neutral-800 rounded-lg p-1 ${
-                    isToday ? 'bg-neutral-800' : 'bg-neutral-900'
-                  } ${hasOverdue ? 'border-red-800' : ''}`}
-                >
-                  <div className={`text-sm font-medium ${
-                    isToday ? 'text-emerald-400' : 'text-neutral-300'
-                  }`}>
-                    {new Date(dateISO).getDate()}
-                  </div>
-                  
-                  <div className="mt-1 space-y-1 overflow-y-auto max-h-16">
-                    {dayTasks.slice(0, 2).map(task => (
-                      <div 
-                        key={task.id} 
-                        className={`text-xs p-1 rounded truncate cursor-pointer ${
-                          isBefore(task.nextDue, today) ? 'bg-red-900/50' : 
-                          isSameDay(task.nextDue, today) ? 'bg-amber-900/50' : 'bg-neutral-800'
-                        }`}
-                        onClick={() => onEdit(task)}
-                      >
-                        {task.title}
-                      </div>
-                    ))}
-                    {dayTasks.length > 2 && (
-                      <div className="text-xs text-neutral-400">+{dayTasks.length - 2} más</div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      );
-    }
+    function Stats({ tasks, historyTasks }) { // Recibir historyTasks como prop
+      const tasksChartRef = useRef(null);
+      const roomsChartRef = useRef(null);
+      const [tasksChartInstance, setTasksChartInstance] = useState(null);
+      const [roomsChartInstance, setRoomsChartInstance] = useState(null);
 
-    function Stats({ tasks }) {
-      const today = todayISO();
-      const total = tasks.length;
-      const onlyToday = tasks.filter((t) => isSameDay(t.nextDue, today)).length;
-      const upcoming = tasks.filter((t) => !isSameDay(t.nextDue, today) && !isBefore(t.nextDue, today)).length;
-      const overdue = tasks.filter((t) => isBefore(t.nextDue, today)).length;
-      const completed = tasks.filter((t) => t.completed).length;
-      const byRoom = groupBy(tasks, (t) => t.room || "General");
-      
-      // Calcular tiempo total estimado
-      const totalTime = tasks.reduce((sum, task) => sum + (task.estimatedTime || 0), 0);
-      
+      const totalActiveTasks = tasks.length;
+      const totalHistoryTasks = historyTasks.length;
+      const overdueTasks = tasks.filter((t) => isBefore(t.nextDue, todayISO())).length;
+
+      // Calcular la tasa de completado
+      const completionRate = totalActiveTasks + totalHistoryTasks > 0
+        ? (totalHistoryTasks / (totalActiveTasks + totalHistoryTasks) * 100).toFixed(1)
+        : 0;
+
+      // Estado de tareas atrasadas
+      const overdueStatus = overdueTasks > 0
+        ? `Tienes ${overdueTasks} tarea${overdueTasks > 1 ? 's' : ''} atrasada${overdueTasks > 1 ? 's' : ''}.`
+        : "¡Todas tus tareas están al día! 🎉";
+
+      // Datos para el gráfico de tareas completadas por mes (últimos 6 meses)
+      const tasksCompletedByMonth = useMemo(() => {
+        const data = {};
+        const monthNames = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+        const today = new Date();
+
+        // Inicializar los últimos 6 meses
+        for (let i = 0; i < 6; i++) {
+          const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+          const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          data[monthKey] = {
+            label: `${monthNames[d.getMonth()]} ${d.getFullYear() % 100}`,
+            count: 0
+          };
+        }
+
+        historyTasks.forEach(task => {
+          if (task.completedAt) {
+            const date = task.completedAt.toDate();
+            const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+            if (data[monthKey]) {
+              data[monthKey].count++;
+            }
+          }
+        });
+        
+        // Convertir a array y ordenar para el gráfico
+        return Object.values(data).sort((a, b) => {
+          const [yearA, monthA] = a.label.split(' ')[1] ? [`20${a.label.split(' ')[1]}`, monthNames.indexOf(a.label.split(' ')[0])] : [0,0];
+          const [yearB, monthB] = b.label.split(' ')[1] ? [`20${b.label.split(' ')[1]}`, monthNames.indexOf(b.label.split(' ')[0])] : [0,0];
+
+          if (yearA !== yearB) return yearA - yearB;
+          return monthA - monthB;
+        });
+      }, [historyTasks]);
+
+      // Datos para el gráfico de distribución por estancia (tareas activas)
+      const tasksByRoomData = useMemo(() => {
+        const counts = {};
+        tasks.forEach(task => {
+          const room = task.room || "General";
+          counts[room] = (counts[room] || 0) + 1;
+        });
+
+        const labels = Object.keys(counts);
+        const data = Object.values(counts);
+        const backgroundColors = [
+          '#059669', '#14B8A6', '#F59E0B', '#EF4444', '#3B82F6', '#8B5CF6', '#EC4899', '#6B7280'
+        ]; // Emerald, Teal, Amber, Red, Blue, Violet, Pink, Gray
+
+        return {
+          labels,
+          datasets: [{
+            data,
+            backgroundColor: backgroundColors.slice(0, labels.length),
+            hoverOffset: 4
+          }]
+        };
+      }, [tasks]);
+
+      // Inicializar y actualizar el gráfico de tareas completadas
+      useEffect(() => {
+        if (tasksChartInstance) {
+          tasksChartInstance.destroy();
+        }
+        if (tasksChartRef.current && tasksCompletedByMonth.length > 0) {
+          const ctx = tasksChartRef.current.getContext('2d');
+          const newChartInstance = new Chart(ctx, {
+            type: 'bar', // o 'line'
+            data: {
+              labels: tasksCompletedByMonth.map(d => d.label),
+              datasets: [{
+                label: 'Tareas completadas',
+                data: tasksCompletedByMonth.map(d => d.count),
+                backgroundColor: '#059669', // emerald-600
+                borderColor: '#047857',
+                borderWidth: 1
+              }]
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: { display: false },
+                title: {
+                  display: true,
+                  text: 'Tareas completadas por mes (Últimos 6 meses)',
+                  color: '#e5e7eb' // neutral-200
+                }
+              },
+              scales: {
+                x: { ticks: { color: '#a1a1aa' }, grid: { color: '#3f3f46' } }, // neutral-400, neutral-700
+                y: { beginAtZero: true, ticks: { color: '#a1a1aa' }, grid: { color: '#3f3f46' } }
+              }
+            }
+          });
+          setTasksChartInstance(newChartInstance);
+        }
+      }, [tasksCompletedByMonth]);
+
+      // Inicializar y actualizar el gráfico de distribución por estancia
+      useEffect(() => {
+        if (roomsChartInstance) {
+          roomsChartInstance.destroy();
+        }
+        if (roomsChartRef.current && tasksByRoomData.labels.length > 0) {
+          const ctx = roomsChartRef.current.getContext('2d');
+          const newChartInstance = new Chart(ctx, {
+            type: 'pie',
+            data: tasksByRoomData,
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  position: 'right',
+                  labels: { color: '#e5e7eb' }
+                },
+                title: {
+                  display: true,
+                  text: 'Tareas activas por estancia',
+                  color: '#e5e7eb'
+                }
+              }
+            }
+          });
+          setRoomsChartInstance(newChartInstance);
+        }
+      }, [tasksByRoomData]);
+
+
       return (
         <section className="py-6 space-y-6">
           <h2 className="text-lg font-semibold">Estadísticas</h2>
           
-          <div className="grid md:grid-cols-5 gap-3">
-            <StatCard label="Total" value={total} />
-            <StatCard label="Hoy" value={onlyToday} />
-            <StatCard label="Próximas" value={upcoming} />
-            <StatCard label="Atrasadas" value={overdue} />
-            <StatCard label="Completadas" value={completed} />
+          <div className="grid md:grid-cols-4 gap-3"> 
+            <StatCard label="Total Tareas Activas" value={totalActiveTasks} />
+            <StatCard label="Historial Completado" value={totalHistoryTasks} />
+            <StatCard label="Tasa de Completado" value={`${completionRate}%`} />
+            <StatCard label="Estado Tareas Atrasadas" value={overdueStatus} />
           </div>
           
-          <div>
-            <h3 className="text-sm text-neutral-400 mb-2">Tiempo total estimado</h3>
-            <div className="grid md:grid-cols-3 gap-3">
-              <StatCard label="Horas" value={Math.round(totalTime / 60 * 10) / 10} />
-              <StatCard label="Minutos" value={totalTime} />
-              <StatCard label="Días (8h)" value={Math.round(totalTime / 480 * 10) / 10} />
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4 h-80 flex items-center justify-center">
+              <canvas ref={tasksChartRef}></canvas>
+            </div>
+            <div className="rounded-2xl border border-neutral-800 bg-neutral-900 p-4 h-80 flex items-center justify-center">
+              <canvas ref={roomsChartRef}></canvas>
             </div>
           </div>
-          
+
           <div>
-            <h3 className="text-sm text-neutral-400 mb-2">Por estancia</h3>
+            <h3 className="text-sm text-neutral-400 mb-2">Por estancia (Tareas Activas)</h3>
             <div className="grid md:grid-cols-3 gap-3">
-              {Object.entries(byRoom).map(([room, list]) => (
+              {Object.entries(groupBy(tasks, (t) => t.room || "General")).map(([room, list]) => (
                 <StatCard key={room} label={room} value={list.length} />
               ))}
             </div>
@@ -726,7 +917,7 @@
       );
     }
 
-    function BottomBar({ onCreateTask, onCreateNote }) {
+    function BottomBar({ onCreateTask, onCreateNote, rooms }) { // Recibe rooms como prop
       return (
         <div className="fixed bottom-0 inset-x-0 z-30 border-t border-neutral-800 bg-neutral-900/95 backdrop-blur">
           <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
@@ -761,25 +952,22 @@
     // =====================================
     // Modales (Task & Note)
     // =====================================
-    function openTaskModal({ task, onSave }) {
+    function openTaskModal({ task, onSave, rooms }) { // Recibe rooms aquí
       const container = document.getElementById('modal-root');
-      ReactDOM.render(<TaskModal task={task} onClose={() => ReactDOM.unmountComponentAtNode(container)} onSave={onSave} />, container);
+      ReactDOM.render(<TaskModal task={task} onClose={() => ReactDOM.unmountComponentAtNode(container)} onSave={onSave} rooms={rooms} />, container);
     }
 
-    function TaskModal({ task, onClose, onSave }) {
+    function TaskModal({ task, onClose, onSave, rooms }) { // Recibe rooms como prop
       const isNew = !task;
       const [t, setT] = useState(task || {
         title: "",
-        room: "General",
+        room: "General", // Valor por defecto
         notes: "",
         frequencyType: "weekly",
         weekdays: [1],
         monthDays: [],
         intervalDays: 7,
-        priority: "media",
         lastDone: todayISO(),
-        subtasks: [],
-        estimatedTime: 30,
       });
 
       const toggleWeekday = (w) => {
@@ -794,30 +982,21 @@
         setT({ ...t, monthDays: Array.from(set).sort((a,b)=>a-b) });
       };
 
-      const addSubtask = () => {
-        setT({
-          ...t,
-          subtasks: [...(t.subtasks || []), { title: "", completed: false }]
-        });
-      };
-
-      const updateSubtask = (index, field, value) => {
-        const newSubtasks = [...t.subtasks];
-        newSubtasks[index] = { ...newSubtasks[index], [field]: value };
-        setT({ ...t, subtasks: newSubtasks });
-      };
-
-      const removeSubtask = (index) => {
-        const newSubtasks = [...t.subtasks];
-        newSubtasks.splice(index, 1);
-        setT({ ...t, subtasks: newSubtasks });
-      };
-
       const handleSave = async () => {
-        if (!t.title.trim()) return alert("Pon un título a la tarea");
+        if (!t.title.trim()) {
+          showCustomAlert("Por favor, pon un título a la tarea.");
+          return;
+        }
         await onSave({ ...t });
         onClose();
       };
+
+      // Opciones para el selector de estancias, excluyendo "todas" si existe
+      // Esta variable ya no se usa porque volvemos a un input de texto
+      // const roomOptions = useMemo(() => {
+      //   return rooms.filter(r => r !== "todas").map(r => ({ value: r, label: r }));
+      // }, [rooms]);
+
 
       return (
         <div className="fixed inset-0 z-40 grid place-items-center p-4 bg-black/50" onClick={onClose}>
@@ -834,20 +1013,8 @@
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-3">
                   <Input label="Título" value={t.title} onChange={(v) => setT({ ...t, title: v })} />
+                  {/* Vuelto a Input para la estancia */}
                   <Input label="Estancia / zona" value={t.room || ""} onChange={(v) => setT({ ...t, room: v })} />
-                  <Select
-                    label="Prioridad"
-                    value={t.priority || "media"}
-                    onChange={(v) => setT({ ...t, priority: v })}
-                    options={[{label:"Alta", value:"alta"}, {label:"Media", value:"media"}, {label:"Baja", value:"baja"}]}
-                  />
-                  <Input 
-                    label="Tiempo estimado (minutos)" 
-                    type="number" 
-                    min="1" 
-                    value={t.estimatedTime || 30} 
-                    onChange={(v) => setT({ ...t, estimatedTime: Number(v) })} 
-                  />
                   <Textarea label="Notas" value={t.notes || ""} onChange={(v) => setT({ ...t, notes: v })} />
                 </div>
                 <div className="space-y-3">
@@ -860,6 +1027,7 @@
                       { label: "Días de la semana", value: "weekly" },
                       { label: "Días del mes", value: "monthly" },
                       { label: "Días específicos (flex)", value: "specificDays" },
+                      { label: "Anual", value: "yearly" }, // Nueva opción anual
                     ]}
                   />
 
@@ -909,47 +1077,11 @@
                     </div>
                   )}
 
+                  {t.frequencyType === "yearly" && ( // Campo para frecuencia anual
+                    <p className="text-sm text-neutral-400">La tarea se repetirá anualmente a partir de la "Última vez".</p>
+                  )}
+
                   <Input label="Última vez (YYYY-MM-DD)" type="date" value={t.lastDone || todayISO()} onChange={(v) => setT({ ...t, lastDone: v })} />
-                  
-                  {/* Subtareas */}
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <Label>Subtareas</Label>
-                      <button 
-                        type="button"
-                        onClick={addSubtask}
-                        className="text-xs px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
-                      >
-                        + Añadir
-                      </button>
-                    </div>
-                    <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                      {(t.subtasks || []).map((subtask, index) => (
-                        <div key={index} className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={subtask.completed}
-                            onChange={(e) => updateSubtask(index, "completed", e.target.checked)}
-                            className="rounded"
-                          />
-                          <input
-                            type="text"
-                            value={subtask.title}
-                            onChange={(e) => updateSubtask(index, "title", e.target.value)}
-                            placeholder="Descripción de la subtarea"
-                            className="flex-1 px-3 py-1 rounded-lg bg-neutral-800 border border-neutral-700"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeSubtask(index)}
-                            className="px-2 py-1 rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30"
-                          >
-                            ✕
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                 </div>
               </div>
             </div>
@@ -965,27 +1097,21 @@
 
     function NoteModal({ note, onClose, onSave }) {
       const isNew = !note;
-      const [n, setN] = useState(note || { title: "", content: "", tags: [] });
-      const [tagInput, setTagInput] = useState("");
+      const [n, setN] = useState(note || { title: "", content: "" }); 
       const editorRef = useRef(null);
 
-      const addTag = () => {
-        const t = tagInput.trim();
-        if (!t) return;
-        if (n.tags?.includes(t)) return;
-        setN({ ...n, tags: [...(n.tags || []), t] });
-        setTagInput("");
-      };
-
-      const formatText = (command) => {
-        document.execCommand(command, false, null);
+      const formatText = (command, value = null) => {
+        document.execCommand(command, false, value);
         if (editorRef.current) {
           setN({ ...n, content: editorRef.current.innerHTML });
         }
       };
 
       const handleSave = async () => {
-        if (!n.title.trim() && !n.content.trim()) return alert("Escribe un título o contenido");
+        if (!n.title.trim() && !n.content.trim()) {
+          showCustomAlert("Por favor, escribe un título o contenido para la nota.");
+          return;
+        }
         await onSave({ ...n });
         onClose();
       };
@@ -1007,7 +1133,7 @@
               <div className="mt-3">
                 <div className="flex justify-between items-center mb-1">
                   <Label>Contenido</Label>
-                  <div className="flex gap-1">
+                  <div className="flex gap-1 flex-wrap"> {/* Flex-wrap para botones en pantallas pequeñas */}
                     <button 
                       type="button"
                       onClick={() => formatText('bold')}
@@ -1040,6 +1166,38 @@
                     >
                       • Lista
                     </button>
+                    <button 
+                      type="button"
+                      onClick={() => formatText('insertOrderedList')}
+                      className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                      title="Lista ordenada"
+                    >
+                      1. Lista
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => formatText('justifyLeft')}
+                      className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                      title="Alinear a la izquierda"
+                    >
+                      ⬅
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => formatText('justifyCenter')}
+                      className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                      title="Centrar"
+                    >
+                      ↔
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={() => formatText('justifyRight')}
+                      className="px-2 py-1 rounded bg-neutral-800 hover:bg-neutral-700"
+                      title="Alinear a la derecha"
+                    >
+                      ➡
+                    </button>
                   </div>
                 </div>
                 <div
@@ -1050,30 +1208,66 @@
                   className="w-full px-3 py-2 rounded-xl bg-neutral-900 border border-neutral-800 focus:outline-none focus:ring-2 focus:ring-teal-500 min-h-40 max-h-96 overflow-y-auto"
                 />
               </div>
-
-              <div className="mt-3">
-                <Label>Etiquetas</Label>
-                <div className="flex gap-2">
-                  <input
-                    value={tagInput}
-                    onChange={(e) => setTagInput(e.target.value)}
-                    placeholder="añade una etiqueta y pulsa +"
-                    className="flex-1 px-3 py-2 rounded-xl bg-neutral-800 border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  />
-                  <button onClick={addTag} className="px-3 py-2 rounded-xl bg-neutral-800 hover:bg-neutral-700">+</button>
-                </div>
-                {n.tags?.length ? (
-                  <div className="mt-2 flex flex-wrap gap-1 text-[10px] text-neutral-300">
-                    {n.tags.map((t) => (
-                      <span key={t} className="px-2 py-0.5 rounded-full bg-neutral-800 border border-neutral-700">#{t}</span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
             </div>
           </div>
         </div>
       );
+    }
+
+    // Custom Alert Modal
+    function showCustomAlert(message) {
+      const container = document.getElementById('modal-root');
+      ReactDOM.render(
+        <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/50" onClick={() => ReactDOM.unmountComponentAtNode(container)}>
+          <div className="bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-6 max-w-sm w-full text-center" onClick={(e) => e.stopPropagation()}>
+            <h4 className="text-lg font-semibold mb-4">Aviso</h4>
+            <p className="text-neutral-200 mb-6">{message}</p>
+            <button
+              onClick={() => ReactDOM.unmountComponentAtNode(container)}
+              className="px-4 py-2 rounded-xl bg-emerald-500 text-black font-medium hover:bg-emerald-400"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>,
+        container
+      );
+    }
+
+    // Custom Confirm Modal
+    function showCustomConfirm(message, details = "") {
+      return new Promise((resolve) => {
+        const container = document.getElementById('modal-root');
+        const handleConfirm = (result) => {
+          ReactDOM.unmountComponentAtNode(container);
+          resolve(result);
+        };
+
+        ReactDOM.render(
+          <div className="fixed inset-0 z-50 grid place-items-center p-4 bg-black/50" onClick={() => handleConfirm(false)}>
+            <div className="bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-6 max-w-sm w-full text-center" onClick={(e) => e.stopPropagation()}>
+              <h4 className="text-lg font-semibold mb-4">Confirmación</h4>
+              <p className="text-neutral-200 mb-2">{message}</p>
+              {details && <p className="text-neutral-400 text-sm mb-6">{details}</p>}
+              <div className="flex justify-center gap-4">
+                <button
+                  onClick={() => handleConfirm(false)}
+                  className="px-4 py-2 rounded-xl bg-neutral-800 text-neutral-100 font-medium hover:bg-neutral-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => handleConfirm(true)}
+                  className="px-4 py-2 rounded-xl bg-emerald-500 text-black font-medium hover:bg-emerald-400"
+                >
+                  Confirmar
+                </button>
+              </div>
+            </div>
+          </div>,
+          container
+        );
+      });
     }
 
     // Reusables
